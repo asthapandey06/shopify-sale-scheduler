@@ -1,0 +1,112 @@
+// Production database: PostgreSQL (Neon, Supabase, Railway, RDS, Fly Postgres...).
+// See README.md for local setup.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Managed by @shopify/shopify-app-session-storage-prisma.
+// accessToken / refreshToken hold AES-256-GCM ciphertext (see app/lib/crypto.ts), never plaintext.
+model Session {
+  id                  String    @id
+  shop                String
+  state               String
+  isOnline            Boolean   @default(false)
+  scope               String?
+  expires             DateTime?
+  accessToken         String
+  userId              BigInt?
+  firstName           String?
+  lastName            String?
+  email               String?
+  accountOwner        Boolean   @default(false)
+  locale              String?
+  collaborator        Boolean?  @default(false)
+  emailVerified       Boolean?  @default(false)
+  refreshToken        String?
+  refreshTokenExpires DateTime?
+
+  @@index([shop])
+}
+
+model Shop {
+  shop          String    @id
+  billingActive Boolean   @default(false)
+  planName      String?
+  isDevStore    Boolean   @default(false)
+  // Per-shop lease so only one worker changes a shop's prices at a time.
+  lockOwner     String?
+  lockedUntil   DateTime?
+  installedAt   DateTime  @default(now())
+  uninstalledAt DateTime?
+  updatedAt     DateTime  @updatedAt
+}
+
+model Sale {
+  id            String     @id @default(cuid())
+  shop          String
+  name          String
+  // SCHEDULED | ACTIVATING | ACTIVE | REVERTING | COMPLETED | CANCELLED | FAILED
+  status        String
+  // PERCENTAGE | FIXED_AMOUNT
+  discountType  String
+  discountValue String
+  // NONE | END_99 | END_95 | WHOLE
+  rounding      String
+  // PRODUCTS | COLLECTIONS
+  targetType    String
+  // JSON array of { id, title }
+  targets       String
+  startsAt      DateTime
+  endsAt        DateTime
+  currencyCode  String?
+  attempts      Int        @default(0)
+  nextAttemptAt DateTime?
+  lastError     String?
+  appliedAt     DateTime?
+  revertedAt    DateTime?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  items         SaleItem[]
+
+  @@index([shop, createdAt])
+  @@index([status, startsAt])
+  @@index([status, endsAt])
+}
+
+model SaleItem {
+  id                     String   @id @default(cuid())
+  saleId                 String
+  shop                   String
+  productId              String
+  variantId              String
+  originalPrice          String
+  originalCompareAtPrice String?
+  salePrice              String
+  saleCompareAtPrice     String?
+  // PENDING | APPLIED | REVERTED | SKIPPED | CONFLICT | FAILED
+  status                 String
+  message                String?
+  updatedAt              DateTime @updatedAt
+  sale                   Sale     @relation(fields: [saleId], references: [id], onDelete: Cascade)
+
+  @@unique([saleId, variantId])
+  @@index([saleId, status])
+  @@index([shop, variantId, status])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  shop      String
+  saleId    String?
+  action    String
+  detail    String?
+  createdAt DateTime @default(now())
+
+  @@index([shop, createdAt])
+}

@@ -1,0 +1,10 @@
+.cache
+build
+node_modules
+.env
+.env.*
+.git
+.shopify
+test
+*.md
+!README.md
