@@ -2,7 +2,9 @@ import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
 import { config } from "../config.server";
 import { logger } from "../lib/logger";
-import { createSaleEngine, type SaleEngine, type TickResult } from "../lib/sale-engine";
+import { createSaleEngine } from "../lib/sale-engine";
+import { createTickRunner, type TickRunner } from "../lib/tick-runner";
+import type { TickResult } from "../lib/sale-engine";
 import { unauthenticated } from "../shopify.server";
 import { createPrismaSaleRepo } from "./sale-repo.server";
 import { createShopifyGateway } from "./shopify-gateway.server";
@@ -17,10 +19,8 @@ import { createShopifyGateway } from "./shopify-gateway.server";
  */
 
 interface SchedulerState {
-  engine: SaleEngine;
+  runner: TickRunner;
   timer: ReturnType<typeof setInterval> | null;
-  running: Promise<TickResult | null> | null;
-  stopping: boolean;
 }
 
 declare global {
@@ -41,30 +41,14 @@ function getState(): SchedulerState {
       owner: `${hostname()}:${process.pid}:${randomUUID().slice(0, 8)}`,
       maxVariantsPerSale: config.limits.maxVariantsPerSale,
     });
-    globalThis.saleSchedulerGlobal = { engine, timer: null, running: null, stopping: false };
+    globalThis.saleSchedulerGlobal = { runner: createTickRunner(() => engine.tick(), logger), timer: null };
   }
   return globalThis.saleSchedulerGlobal;
 }
 
 /** Runs one pass unless one is already in progress in this process. */
 export function runTick(): Promise<TickResult | null> {
-  const state = getState();
-  if (state.stopping) return Promise.resolve(null);
-  if (state.running) return state.running;
-  state.running = state.engine
-    .tick()
-    .then((result) => {
-      if (result.processed || result.errors) logger.info("Scheduler pass finished", { ...result });
-      return result;
-    })
-    .catch((error: unknown) => {
-      logger.error("Scheduler pass failed", { error: (error as Error).message });
-      return null;
-    })
-    .finally(() => {
-      state.running = null;
-    });
-  return state.running;
+  return getState().runner.runTick();
 }
 
 /** Fire-and-forget pass, used right after a merchant starts or ends a sale. */
@@ -81,12 +65,12 @@ export function startScheduler(): void {
   logger.info("PriceTide scheduler started", { intervalMs: config.schedulerIntervalMs });
 
   const shutdown = async (signal: string) => {
-    state.stopping = true;
     if (state.timer) clearInterval(state.timer);
     state.timer = null;
     logger.info("Scheduler stopping; waiting for current pass", { signal });
     // Let an in-flight pass finish so shop leases are released cleanly.
-    await Promise.race([state.running, new Promise((resolve) => setTimeout(resolve, 20_000))]);
+    const finished = await state.runner.stop(20_000);
+    if (!finished) logger.warn("Scheduler pass still running at shutdown; its leases expire on their own");
     process.exit(0);
   };
   process.once("SIGTERM", () => void shutdown("SIGTERM"));
