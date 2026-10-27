@@ -34,5 +34,7 @@ jobs:
         run: npx prisma migrate deploy
       - run: npm run typecheck
       - run: npm test
+      - name: Database integration tests (webhooks, shop scoping, repo)
+        run: npm run test:db
       - run: npm run lint
       - run: npm run build

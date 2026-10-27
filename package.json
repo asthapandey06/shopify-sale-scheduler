@@ -19,6 +19,7 @@
     "vite": "vite",
     "typecheck": "react-router typegen && tsc --noEmit",
     "test": "node --test \"test/**/*.test.ts\"",
+    "test:db": "node --env-file-if-exists=.env --import ./test/support/register.mjs --test \"test/db/**/*.integration.ts\"",
     "check": "npm run typecheck && npm test && npm run lint"
   },
   "type": "module",
