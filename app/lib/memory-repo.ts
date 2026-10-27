@@ -102,9 +102,12 @@ export function createMemoryRepo() {
       const busy = new Set<string>();
       for (const item of items.values()) {
         if (item.shop !== shop || item.saleId === excludeSaleId || !wanted.has(item.variantId)) continue;
-        if (item.status !== ITEM_STATUS.PENDING && item.status !== ITEM_STATUS.APPLIED) continue;
-        const sale = sales.get(item.saleId);
-        if (sale && LIVE_STATUSES.includes(sale.status)) busy.add(item.variantId);
+        if (item.status === ITEM_STATUS.APPLIED) {
+          busy.add(item.variantId);
+        } else if (item.status === ITEM_STATUS.PENDING) {
+          const sale = sales.get(item.saleId);
+          if (sale && LIVE_STATUSES.includes(sale.status)) busy.add(item.variantId);
+        }
       }
       return busy;
     },

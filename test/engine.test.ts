@@ -261,3 +261,17 @@ test("a crash between Shopify write and bookkeeping is recovered on revert", asy
   assert.equal(price("11").price, "100.00");
   assert.equal(price("12").price, "50.00");
 });
+
+test("variants still discounted by a failed sale are not stacked by a new sale", async () => {
+  const { mem, time, engine, addSale, price } = setup();
+  addSale({ id: "sale_1" });
+  await engine.tick();
+  // The app was uninstalled mid-sale: the sale is FAILED but its prices are still in Shopify.
+  mem.sales.get("sale_1")!.status = "FAILED";
+  addSale({ id: "sale_2", startsAt: time.now(), endsAt: new Date("2026-11-01T11:00:00Z") });
+  await engine.tick();
+  assert.equal(price("11").price, "80.00", "not 64.00");
+  const s2Items = [...mem.items.values()].filter((i) => i.saleId === "sale_2");
+  assert.ok(s2Items.every((i) => i.status === "SKIPPED"));
+  assert.ok(s2Items.every((i) => i.originalPrice !== "80.00" || i.status === "SKIPPED"));
+});

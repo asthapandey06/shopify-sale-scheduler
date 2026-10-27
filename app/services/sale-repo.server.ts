@@ -183,8 +183,12 @@ export function createPrismaSaleRepo(db: PrismaClient = prisma): SaleRepo {
             shop,
             saleId: { not: excludeSaleId },
             variantId: { in: ids },
-            status: { in: [ITEM_STATUS.PENDING, ITEM_STATUS.APPLIED] },
-            sale: { status: { in: LIVE_STATUSES } },
+            // APPLIED means the sale price is in Shopify, whatever the sale's status (e.g. FAILED after an
+            // uninstall, awaiting restore). PENDING only blocks while its sale may still write it.
+            OR: [
+              { status: ITEM_STATUS.APPLIED },
+              { status: ITEM_STATUS.PENDING, sale: { status: { in: LIVE_STATUSES } } },
+            ],
           },
           select: { variantId: true },
         });
