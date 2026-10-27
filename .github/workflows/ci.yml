@@ -38,3 +38,5 @@ jobs:
         run: npm run test:db
       - run: npm run lint
       - run: npm run build
+      - name: Production Docker image builds
+        run: docker build --tag pricetide:ci .

@@ -1,5 +1,6 @@
 # ---- build stage: full dependencies, compile the app ----
-FROM node:22-alpine AS build
+# Official Node image via AWS public ECR (avoids Docker Hub rate limits and Cloud Shell's mirror).
+FROM public.ecr.aws/docker/library/node:22-alpine AS build
 RUN apk add --no-cache openssl
 WORKDIR /app
 COPY package.json package-lock.json* ./
@@ -8,7 +9,7 @@ COPY . .
 RUN npx prisma generate && npm run build
 
 # ---- runtime stage: production dependencies only, non-root ----
-FROM node:22-alpine
+FROM public.ecr.aws/docker/library/node:22-alpine
 RUN apk add --no-cache openssl tini
 WORKDIR /app
 ENV NODE_ENV=production
