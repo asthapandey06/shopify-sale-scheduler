@@ -40,6 +40,7 @@ export function ErrorBoundary() {
         <ErrorPage
           title={notFound ? "Page not found" : "Something went wrong"}
           message={notFound ? "The page you're looking for doesn't exist." : "Please try again in a moment."}
+          link={{ href: "/", label: "Go to the PriceTide home page" }}
         />
         <Scripts />
       </body>
