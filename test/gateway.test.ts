@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import { createShopifyGateway, isThrottled } from "../app/services/shopify-gateway.server.ts";
 
 type Handler = (query: string, variables: Record<string, unknown>) => unknown;
@@ -17,7 +18,7 @@ function fakeAdmin(handler: Handler) {
         if (result instanceof Error) throw result;
         return new Response(JSON.stringify({ data: result }));
       },
-    },
+    } as unknown as Pick<AdminApiContext, "graphql">,
   };
 }
 
@@ -39,7 +40,7 @@ test("paginates product variants and stops past the cap", async () => {
     c1: { nodes: [{ id: "v3", price: "9.00", compareAtPrice: null }], next: null },
   };
   const { admin, calls } = fakeAdmin((op, vars) => {
-    assert.equal(op, "SaleSchedulerProductVariants");
+    assert.equal(op, "PriceTideProductVariants");
     const page = pages[(vars.after as string | null) ?? "start"];
     return {
       product: { variants: { nodes: page.nodes, pageInfo: { hasNextPage: page.next !== null, endCursor: page.next } } },
@@ -58,7 +59,7 @@ test("paginates product variants and stops past the cap", async () => {
 
 test("expands collections into unique products", async () => {
   const { admin } = fakeAdmin((op, vars) => {
-    if (op === "SaleSchedulerCollectionProducts") {
+    if (op === "PriceTideCollectionProducts") {
       const products = vars.id === "c1" ? [{ id: "p1" }, { id: "p2" }] : [{ id: "p2" }];
       return { collection: { products: { nodes: products, pageInfo: { hasNextPage: false, endCursor: null } } } };
     }
@@ -78,7 +79,7 @@ test("expands collections into unique products", async () => {
 
 test("deleted products and variants are tolerated", async () => {
   const { admin } = fakeAdmin((op) =>
-    op === "SaleSchedulerProductVariants"
+    op === "PriceTideProductVariants"
       ? { product: null }
       : { nodes: [null, { id: "v2", price: "3.00", compareAtPrice: null, product: { id: "p" } }] },
   );
