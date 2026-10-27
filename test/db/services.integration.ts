@@ -327,3 +327,21 @@ test("shops uninstalled more than 30 days ago are purged", async () => {
   assert.equal(await prisma.sale.count({ where: { shop: SHOP } }), 0);
   assert.equal(await prisma.sale.count({ where: { shop: OTHER } }), 5, "within the retention window: kept");
 });
+
+test("uninstall and shop/redact are skipped when Shopify confirms the app is installed again", async () => {
+  const ids = await seedShop(SHOP);
+  const installed = async () => true;
+  const uninstalled = async () => false;
+
+  // A retry whose delivery timestamp is newer than the reinstall: only the live check catches it.
+  assert.equal(await sales.handleUninstall(SHOP, new Date(Date.now() + 60_000), installed), false);
+  assert.equal(await statusOf(ids.SCHEDULED), "SCHEDULED");
+  assert.equal(await sales.redactShop(SHOP, installed), false);
+  assert.equal(await prisma.sale.count({ where: { shop: SHOP } }), 5, "an installed shop is never erased");
+
+  // Really uninstalled (token revoked): both proceed.
+  assert.equal(await sales.handleUninstall(SHOP, undefined, uninstalled), true);
+  assert.equal(await statusOf(ids.SCHEDULED), "CANCELLED");
+  assert.equal(await sales.redactShop(SHOP, uninstalled), true);
+  assert.equal(await prisma.sale.count({ where: { shop: SHOP } }), 0);
+});

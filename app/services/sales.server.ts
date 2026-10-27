@@ -253,6 +253,19 @@ export async function purgeUninstalledShops(cutoff: Date): Promise<number> {
   return purged;
 }
 
+/**
+ * shop/redact: erase the shop's data, unless Shopify confirms the app is installed again (the merchant
+ * reinstalled; erasing would break their working app). If that can't be confirmed, the data is erased.
+ */
+export async function redactShop(shop: string, isStillInstalled?: () => Promise<boolean>): Promise<boolean> {
+  if (isStillInstalled && (await isStillInstalled())) {
+    logger.warn("Skipping shop/redact: Shopify reports the app is installed again", { shop });
+    return false;
+  }
+  await purgeShopData(shop);
+  return true;
+}
+
 /** Deletes everything stored for a shop (shop/redact). */
 export async function purgeShopData(shop: string): Promise<void> {
   await prisma.$transaction([
@@ -269,7 +282,11 @@ export async function purgeShopData(shop: string): Promise<void> {
  * changed. Scheduled sales are cancelled; running ones are flagged so the
  * merchant sees what happened if they reinstall.
  */
-export async function handleUninstall(shop: string, triggeredAt?: Date): Promise<boolean> {
+export async function handleUninstall(
+  shop: string,
+  triggeredAt?: Date,
+  isStillInstalled?: () => Promise<boolean>,
+): Promise<boolean> {
   if (triggeredAt) {
     const row = await prisma.shop.findUnique({ where: { shop }, select: { installedAt: true } });
     if (row && row.installedAt.getTime() > triggeredAt.getTime()) {
@@ -277,6 +294,11 @@ export async function handleUninstall(shop: string, triggeredAt?: Date): Promise
       logger.warn("Ignoring app/uninstalled triggered before the latest install", { shop });
       return false;
     }
+  }
+  // The delivery timestamp of a retry can be newer than the reinstall, so also ask Shopify.
+  if (isStillInstalled && (await isStillInstalled())) {
+    logger.warn("Ignoring app/uninstalled: Shopify reports the app is installed", { shop });
+    return false;
   }
   await prisma.$transaction([
     prisma.session.deleteMany({ where: { shop } }),
