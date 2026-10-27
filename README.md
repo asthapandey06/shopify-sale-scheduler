@@ -128,14 +128,40 @@ Shopify CLI login) are cleared when the VM is recycled; the next run reinstalls 
 Any host that runs a Docker container and a PostgreSQL database works (Fly.io, Render, Railway, a VPS).
 
 1. Create a managed PostgreSQL database.
-2. Set environment variables (see `.env.example`): `NODE_ENV=production`, `SHOPIFY_API_KEY`,
-   `SHOPIFY_API_SECRET`, `SHOPIFY_APP_URL` (https), `SCOPES=write_products`, `DATABASE_URL`,
-   `TOKEN_ENCRYPTION_KEYS`, `SUPPORT_EMAIL`, `APP_OWNER_NAME`. Keep `BILLING_TEST_MODE` unset/false.
-3. Build and run the `Dockerfile`. On start it runs `prisma migrate deploy`, then serves on port 3000.
-   Health check: `GET /healthz`.
+2. Set the environment variables below. Every value is checked at boot: if anything is missing or wrong the
+   app refuses to start and lists every problem.
+3. Build and run the `Dockerfile` (runs as a non-root user under `tini`). On start it runs
+   `prisma migrate deploy` (over `DIRECT_URL` when set), then serves on port 3000.
+   Health check: `GET /healthz` (checks the database; the image has a `HEALTHCHECK` too).
+
+### Environment variables
+
+| Variable | Required | Production value / notes |
+|---|---|---|
+| `NODE_ENV` | yes | `production` (the Dockerfile sets it). Enables https/HSTS checks and `SUPPORT_EMAIL`. |
+| `SHOPIFY_API_KEY`, `SHOPIFY_API_SECRET` | yes | From the Partner Dashboard (`npm run env show`). Secret: never commit. |
+| `SHOPIFY_APP_URL` | yes | Your stable https URL, e.g. `https://app.pricetide.example`. Tunnels/localhost are rejected in production. |
+| `DATABASE_URL` | yes | `postgres://` URL the app uses. On Neon use the **pooled** (`-pooler`) host and add `?sslmode=require&connect_timeout=15` (computes scale to zero and take a few seconds to wake). |
+| `DIRECT_URL` | no | Direct (non-pooled) URL used only for migrations. Set it when `DATABASE_URL` goes through a pooler (Neon, PgBouncer); Prisma Migrate needs a direct connection. |
+| `TOKEN_ENCRYPTION_KEYS` | yes | `id:base64key[,id:base64key…]`, 32-byte keys; the first encrypts, all decrypt (rotation: see `SECURITY.md`). Generate: `node -e "console.log('k1:'+require('crypto').randomBytes(32).toString('base64'))"`. |
+| `SUPPORT_EMAIL` | in production | Shown on the privacy page. |
+| `APP_OWNER_NAME` | no | Legal name shown on the privacy page (default "the app developer"). |
+| `SCOPES` | no | `write_products` (the only allowed value). |
+| `SCHEDULER_ENABLED` | no | `true` (default) runs the scheduler in the web process. `false` needs `CRON_SECRET`. |
+| `CRON_SECRET` | if scheduler off | 32+ characters; enables `POST /jobs/tick` with `Authorization: Bearer …`. |
+| `SCHEDULER_INTERVAL_SECONDS` | no | 10–3600, default 30. |
+| `PLAN_PRICE`, `TRIAL_DAYS` | no | Default 9.99 (USD / 30 days) and 7. Change only together with the listing. |
+| `BILLING_TEST_MODE` | no | Leave unset (off). Development stores get test charges automatically. |
+| `MAX_VARIANTS_PER_SALE`, `MAX_LIVE_SALES_PER_SHOP` | no | Defaults 5000 and 20. |
+| `LOG_LEVEL` | no | `info` (default), `debug`, `warn` or `error`. Logs are JSON lines with secrets redacted. |
+| `SHOP_CUSTOM_DOMAIN` | no | Only if your shops use a custom admin domain. |
+| `PORT` | no | Defaults to 3000. |
+
+Yes/no values accept `true/false`, `yes/no`, `on/off`, `1/0`; anything else is a boot error.
 4. Point the app URL at it and push the config: `npm run deploy`.
 5. Serverless host? Set `SCHEDULER_ENABLED=false`, set `CRON_SECRET`, and call every minute:
    `curl -X POST -H "Authorization: Bearer $CRON_SECRET" https://your-app/jobs/tick`
+   (this also runs the 30-day retention purge of uninstalled shops).
 
 Run at least one always-on instance (or the cron) — sales only start and end while the scheduler runs.
 
