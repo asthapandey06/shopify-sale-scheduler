@@ -1,12 +1,15 @@
 # Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+# Linked to the Partner Dashboard app with `npm run config:link`.
 
 client_id = "6f11327982fadfacde57f6b18a004ca8"
-name = "price-tide"
+name = "PriceTide: Scheduled Sales"
 embedded = true
+# PLACEHOLDER: `npm run dev` swaps in the tunnel URL automatically. Before `npm run deploy`, set this and
+# [auth].redirect_urls to the production URL (see DEPLOY.md), or the deployed app won't load or install.
 application_url = "https://shopify.dev/apps/default-app-home"
 
 [access_scopes]
-# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
+# Least privilege: the app only reads and updates product variant prices.
 scopes = "write_products"
 
 [webhooks]
@@ -24,6 +27,7 @@ api_version = "2026-10"
   topics = [ "app_subscriptions/update" ]
   uri = "/webhooks/app_subscriptions/update"
 
+  # Mandatory privacy (GDPR) webhooks for App Store apps.
   [[webhooks.subscriptions]]
   compliance_topics = [ "customers/data_request" ]
   uri = "/webhooks/customers/data_request"
