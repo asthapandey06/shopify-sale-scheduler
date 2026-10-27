@@ -5,6 +5,7 @@ import {
   formatDecimal,
   minorUnit,
   parseDecimal,
+  roundToMinor,
 } from "./money.ts";
 
 export const DISCOUNT_TYPES = ["PERCENTAGE", "FIXED_AMOUNT"] as const;
@@ -78,7 +79,8 @@ export function computeSalePrice(input: PriceInput): PriceResult {
     sale = divRoundHalfUp(exact, minorUnit(decimals)) * minorUnit(decimals);
   } else {
     if (value >= base) return { ok: false, reason: "Discount is larger than the price" };
-    sale = base - value;
+    // Round before the checks below, so e.g. ¥1 - ¥0.60 can't pass as positive and then format as "0".
+    sale = roundToMinor(base - value, decimals);
   }
 
   sale = applyRounding(sale, input.rounding, decimals);

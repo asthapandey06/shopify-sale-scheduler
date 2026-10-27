@@ -79,6 +79,22 @@ test("zero-decimal currencies", () => {
   assert.equal((jpy99 as { salePrice: string }).salePrice, "1699"); // charm falls back to whole units
 });
 
+test("fixed amounts finer than the currency's minor unit never yield a zero or unchanged price", () => {
+  const fixed = { ...base, discountType: "FIXED_AMOUNT" as const };
+  // ¥1 - ¥0.60 used to format as "0" after the zero check had already passed.
+  assert.equal(computeSalePrice({ ...fixed, price: "1", discountValue: "0.60", currencyCode: "JPY" }).ok, false);
+  // ¥100 - ¥0.40 used to format as "100", equal to the current price.
+  assert.equal(computeSalePrice({ ...fixed, price: "100", discountValue: "0.40", currencyCode: "JPY" }).ok, false);
+  assert.equal(computeSalePrice({ ...fixed, price: "1.00", discountValue: "0.996", currencyCode: "USD" }).ok, false);
+  assert.equal(computeSalePrice({ ...fixed, price: "10.000", discountValue: "9.9996", currencyCode: "KWD" }).ok, false);
+  // Amounts that round to a real discount still work, rounded half up to the minor unit.
+  assert.deepEqual(computeSalePrice({ ...fixed, price: "100", discountValue: "0.60", currencyCode: "JPY" }), {
+    ok: true,
+    salePrice: "99",
+    compareAtPrice: "100",
+  });
+});
+
 test("existing markdowns keep the higher compare-at price", () => {
   const r = computeSalePrice({ ...base, price: "80.00", compareAtPrice: "120.00", discountValue: "10" });
   assert.deepEqual(r, { ok: true, salePrice: "72.00", compareAtPrice: "120.00" });
