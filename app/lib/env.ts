@@ -75,7 +75,7 @@ export function loadConfig(env: Record<string, string | undefined>): AppConfig {
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
-  const allowedScopes = new Set(["write_products", "read_products"]);
+  const allowedScopes = new Set(["write_products"]);
   for (const scope of scopes) {
     if (!allowedScopes.has(scope)) errors.push(`Scope "${scope}" is not needed by this app; remove it (least privilege)`);
   }
