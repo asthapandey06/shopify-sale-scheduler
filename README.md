@@ -63,10 +63,10 @@ Prerequisites: Node 22.18+, [Shopify CLI](https://shopify.dev/docs/apps/tools/cl
 development store, and PostgreSQL (Docker is easiest).
 
 ```bash
-# 1. Database
-docker run -d --name sale-scheduler-db -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=pricetide -p 5432:5432 postgres:16
+# 1. Database: PostgreSQL 16 from compose.yaml (set POSTGRES_USER/PASSWORD/DB in .env first, see below)
+docker compose up -d db
 
-# 2. Install (this creates package-lock.json — commit it)
+# 2. Install
 npm install
 
 # 3. Environment
