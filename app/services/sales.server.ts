@@ -181,6 +181,11 @@ export async function pauseShop(shop: string): Promise<{ endedSales: number }> {
       where: { shop, status: SALE_STATUS.ACTIVE },
       data: { endsAt: now, nextAttemptAt: null },
     }),
+    // A sale that is starting but waiting to retry is picked up right away and rolled back by the engine.
+    prisma.sale.updateMany({
+      where: { shop, status: SALE_STATUS.ACTIVATING },
+      data: { nextAttemptAt: null },
+    }),
   ]);
   await audit(shop, null, "shop.paused", { endedSales: ended.count });
   return { endedSales: ended.count };
@@ -234,6 +239,11 @@ export async function purgeUninstalledShops(cutoff: Date): Promise<number> {
   const stale = await prisma.shop.findMany({ where: { uninstalledAt: { lt: cutoff } }, select: { shop: true } });
   let purged = 0;
   for (const { shop } of stale) {
+    const stillChanged = await prisma.saleItem.count({ where: { shop, status: ITEM_STATUS.APPLIED } });
+    if (stillChanged > 0) {
+      // Normally shop/redact already erased this 48 h after uninstall; record that original prices are lost.
+      logger.warn("Purging a shop whose sale prices were never restored", { shop, variants: stillChanged });
+    }
     // Re-checked inside the transaction (the Shop row is deleted first, which locks it): a shop that
     // reinstalled since the query above has uninstalledAt cleared and is left alone.
     const erased = await prisma.$transaction(async (tx) => {

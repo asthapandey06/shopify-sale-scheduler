@@ -345,3 +345,22 @@ test("uninstall and shop/redact are skipped when Shopify confirms the app is ins
   assert.equal(await sales.redactShop(SHOP, uninstalled), true);
   assert.equal(await prisma.sale.count({ where: { shop: SHOP } }), 0);
 });
+
+test("pause wakes a starting sale that is waiting to retry, so its rollback isn't delayed", async () => {
+  const ids = await seedShop(SHOP);
+  await prisma.sale.update({ where: { id: ids.ACTIVATING }, data: { nextAttemptAt: new Date(Date.now() + 15 * 60_000) } });
+  await sales.pauseShop(SHOP);
+  assert.equal((await prisma.sale.findUniqueOrThrow({ where: { id: ids.ACTIVATING } })).nextAttemptAt, null);
+  const due = await createPrismaSaleRepo(prisma).findDueSales(new Date(), 100);
+  assert.ok(due.some((s) => s.id === ids.ACTIVATING));
+});
+
+test("findDueSales: a paused shop's scheduled sale is held only while its window is still open", async () => {
+  const ids = await seedShop(SHOP);
+  await sales.pauseShop(SHOP);
+  const repo = createPrismaSaleRepo(prisma);
+  const sale = await prisma.sale.findUniqueOrThrow({ where: { id: ids.SCHEDULED } });
+  assert.ok(!(await repo.findDueSales(new Date(), 100)).some((s) => s.id === ids.SCHEDULED), "window open: held");
+  const afterEnd = new Date(sale.endsAt.getTime() + 60_000);
+  assert.ok((await repo.findDueSales(afterEnd, 100)).some((s) => s.id === ids.SCHEDULED), "window passed: due (marked missed)");
+});

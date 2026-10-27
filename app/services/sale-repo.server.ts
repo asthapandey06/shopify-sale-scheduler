@@ -96,21 +96,28 @@ export async function ensureShop(shop: string, db: PrismaClient = prisma): Promi
 export function createPrismaSaleRepo(db: PrismaClient = prisma): SaleRepo {
   return {
     async findDueSales(now, limit) {
-      // Raw SQL for the NOT EXISTS on paused shops (Sale has no relation to Shop); the rest mirrors the
-      // memory repo. Values are bound parameters.
-      const due = await db.$queryRaw<{ id: string }[]>`
-        SELECT s."id" FROM "Sale" s
-        WHERE (s."nextAttemptAt" IS NULL OR s."nextAttemptAt" <= ${now})
-          AND (
-            (s."status" = ${SALE_STATUS.SCHEDULED} AND s."startsAt" <= ${now}
-              AND NOT EXISTS (SELECT 1 FROM "Shop" sh WHERE sh."shop" = s."shop" AND sh."pausedAt" IS NOT NULL))
-            OR (s."status" = ${SALE_STATUS.ACTIVE} AND s."endsAt" <= ${now})
-            OR s."status" IN (${SALE_STATUS.ACTIVATING}, ${SALE_STATUS.REVERTING})
-          )
-        ORDER BY s."startsAt" ASC
-        LIMIT ${limit}`;
-      if (due.length === 0) return [];
-      const rows = await db.sale.findMany({ where: { id: { in: due.map((d) => d.id) } }, orderBy: { startsAt: "asc" } });
+      // Paused shops are few (merchants who chose to pause), so a typed notIn list is fine here.
+      const paused = await db.shop.findMany({ where: { pausedAt: { not: null } }, select: { shop: true } });
+      const pausedShops = paused.map((row) => row.shop);
+      const rows = await db.sale.findMany({
+        where: {
+          AND: [
+            { OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }] },
+            {
+              OR: [
+                // A paused shop's scheduled sale is held while its window is open; once the window has
+                // passed it is due again, so the engine can mark it missed.
+                { status: SALE_STATUS.SCHEDULED, startsAt: { lte: now }, shop: { notIn: pausedShops } },
+                { status: SALE_STATUS.SCHEDULED, startsAt: { lte: now }, endsAt: { lte: now } },
+                { status: SALE_STATUS.ACTIVE, endsAt: { lte: now } },
+                { status: { in: [SALE_STATUS.ACTIVATING, SALE_STATUS.REVERTING] } },
+              ],
+            },
+          ],
+        },
+        orderBy: { startsAt: "asc" },
+        take: limit,
+      });
       return rows.map(toSaleRecord);
     },
 

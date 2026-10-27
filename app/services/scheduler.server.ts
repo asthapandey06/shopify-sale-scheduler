@@ -15,8 +15,12 @@ import { purgeUninstalledShops } from "./sales.server";
 const RETENTION_MS = 30 * 86_400_000;
 const PURGE_INTERVAL_MS = 60 * 60_000;
 
-/** Retention safety net; failures are logged and retried on the next run. */
+let lastPurgeAt = 0;
+
+/** Retention safety net, at most once per PURGE_INTERVAL_MS; failures are logged and retried next time. */
 export async function runRetentionPurge(): Promise<number> {
+  if (Date.now() - lastPurgeAt < PURGE_INTERVAL_MS) return 0;
+  lastPurgeAt = Date.now();
   try {
     return await purgeUninstalledShops(new Date(Date.now() - RETENTION_MS));
   } catch (error) {

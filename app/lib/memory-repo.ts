@@ -41,7 +41,9 @@ export function createMemoryRepo() {
         .filter((s) => !s.nextAttemptAt || s.nextAttemptAt.getTime() <= t)
         .filter(
           (s) =>
-            (s.status === SALE_STATUS.SCHEDULED && s.startsAt.getTime() <= t && !shops.get(s.shop)?.paused) ||
+            (s.status === SALE_STATUS.SCHEDULED &&
+              s.startsAt.getTime() <= t &&
+              (!shops.get(s.shop)?.paused || s.endsAt.getTime() <= t)) ||
             (s.status === SALE_STATUS.ACTIVE && s.endsAt.getTime() <= t) ||
             s.status === SALE_STATUS.ACTIVATING ||
             s.status === SALE_STATUS.REVERTING,

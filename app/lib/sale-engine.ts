@@ -144,6 +144,8 @@ export function createSaleEngine(deps: EngineDeps) {
       return { ...base, salePrice: result.salePrice, saleCompareAtPrice: result.compareAtPrice, status: ITEM_STATUS.PENDING, message: null };
     });
 
+    // A long snapshot may outlive the lease; don't save it if another worker took over meanwhile.
+    await renew(sale.shop);
     await repo.insertItems(items);
     await repo.audit({
       shop: sale.shop,
@@ -393,7 +395,6 @@ export function createSaleEngine(deps: EngineDeps) {
         );
         stillApplied += failed;
         restored += succeeded;
-        await renew(sale.shop);
       }
 
       if (stillApplied > 0) {

@@ -468,3 +468,28 @@ test("the end-of-sale audit records restored and conflicting variants for suppor
   const entry = mem.auditLog.find((e) => e.action === "sale.reverted")!;
   assert.deepEqual(entry.detail, { restored: 1, conflicts: 1 });
 });
+
+test("a paused shop's sale whose whole window passed is marked missed, not left scheduled", async () => {
+  const { mem, time, engine, addSale, price } = setup();
+  addSale();
+  mem.setPaused(SHOP, true);
+  time.set("2026-11-01T13:00:00Z"); // start and end both passed while paused
+  await engine.tick();
+  assert.equal(mem.sales.get("sale_1")!.status, "FAILED");
+  assert.match(mem.sales.get("sale_1")!.lastError ?? "", /window passed/);
+  assert.equal(price("11").price, "100.00");
+});
+
+test("a snapshot taken by a worker that lost its lease is not saved", async () => {
+  const { mem, store, time, engine, addSale } = setup({ leaseMs: 60_000 });
+  addSale();
+  const realList = store.gateway.listTargetVariants;
+  store.gateway.listTargetVariants = async (...args) => {
+    time.advance(61_000);
+    await mem.repo.claimShop(SHOP, "worker-b", new Date(time.now().getTime() + 60_000), time.now());
+    return realList(...args);
+  };
+  await engine.tick();
+  assert.equal(mem.items.size, 0, "worker-b takes its own snapshot");
+  assert.ok(!mem.auditLog.some((e) => e.action === "sale.snapshot"));
+});
