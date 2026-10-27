@@ -1,0 +1,47 @@
+# Local development only (app + Postgres). Production runs ./Dockerfile against a managed database.
+# Usage: see "Local development with Docker" in README.md.
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: pricetide
+    # Only reachable from this machine. Data lives in $HOME so it survives Cloud Shell restarts.
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - ${HOME}/.pricetide-dev/pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d pricetide"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Overrides .env so the container always talks to the db service above.
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/pricetide
+    volumes:
+      - .:/home/node/app
+      - node_modules:/home/node/app/node_modules
+      # Shopify CLI login, kept between container runs.
+      - shopify-cli-config:/home/node/.config
+      - shopify-cli-cache:/home/node/.cache
+    stdin_open: true
+    tty: true
+
+volumes:
+  node_modules:
+  shopify-cli-config:
+  shopify-cli-cache:

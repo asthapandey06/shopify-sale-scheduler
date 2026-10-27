@@ -87,6 +87,37 @@ npm run dev
 `npm run dev` applies migrations, starts a tunnel and opens the app in your development store. Charges are
 always test charges on development stores.
 
+### Local development with Docker (app + database)
+
+`compose.yaml` runs the app (with the Shopify CLI, from `Dockerfile.dev`) and PostgreSQL 16. It is for
+development only; production uses `Dockerfile`. Your code is mounted into the container, so edits hot-reload.
+
+```bash
+# 1. Environment: cp .env.example .env and set TOKEN_ENCRYPTION_KEYS as above.
+#    Set DATABASE_URL=postgresql://postgres:postgres@db:5432/pricetide so the app and Prisma both use the
+#    Docker database (compose also forces this value inside the container).
+
+# 2. Start the database (data is kept in ~/.pricetide-dev/pgdata, which survives Cloud Shell restarts)
+docker compose up -d db
+
+# 3. Run the app. The first run installs dependencies; the Shopify CLI asks you to log in with a code
+#    the first time (the login is kept in a Docker volume). Link your app once, then start dev.
+docker compose run --rm app npm run config:link
+docker compose run --rm app npm run dev
+
+# Other commands run the same way, e.g.
+docker compose run --rm app npm run check
+docker compose run --rm app npx prisma migrate dev --name <change>
+
+# Stop everything
+docker compose down
+```
+
+The database is also published on `127.0.0.1:5432` for tools on the host. Dependencies are reinstalled
+automatically when `package-lock.json` changes. On Cloud Shell, Docker volumes (installed dependencies and the
+Shopify CLI login) are cleared when the VM is recycled; the next run reinstalls and asks you to log in again.
+`docker compose down` keeps the database; delete `~/.pricetide-dev/pgdata` to reset it.
+
 ## Deploying to production
 
 Any host that runs a Docker container and a PostgreSQL database works (Fly.io, Render, Railway, a VPS).
