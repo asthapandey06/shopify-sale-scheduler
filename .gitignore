@@ -30,3 +30,6 @@ pnpm-lock.yaml
 
 # Graphify knowledge graph (generated)
 graphify-out/
+
+# Playwright MCP output (screenshots, snapshots, console logs)
+.playwright-mcp/
