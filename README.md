@@ -1,4 +1,4 @@
-# # PriceTide — Shopify app — Shopify app
+# PriceTide: Scheduled Sales (Shopify app)
 
 Schedule sales on products or collections. At the start time the app lowers prices (and sets an honest
 compare-at "was" price); at the end time it puts every price back exactly as it was. Built on Shopify's
@@ -13,6 +13,7 @@ official React Router app template (Node.js + TypeScript, Polaris web components
 - Prices a merchant edits during a sale are never overwritten (flagged as "Edited during sale")
 - Variants already in another running sale are skipped, so discounts never stack
 - End early, cancel, restore after a failure, per-variant status table
+- Pause PriceTide (keeps sales and history, cancels the plan, resume later) or permanently delete all sale data
 - Shopify Billing: one "Pro" plan, $9.99 / 30 days, 7-day free trial (configurable)
 
 ## How it works
@@ -41,19 +42,20 @@ The core logic lives in `app/lib/` with no framework dependencies and is covered
 | Area | Measure |
 | --- | --- |
 | Authentication | Every admin route uses `authenticate.admin` (App Bridge session tokens, no cookies → no CSRF surface). OAuth handled by the official library with expiring offline tokens. |
-| Webhooks | All webhooks verified by HMAC via `authenticate.webhook`; handlers are idempotent. |
+| Webhooks | All webhooks verified by HMAC via `authenticate.webhook`; handlers are idempotent. Uninstall cleanup and `shop/redact` first ask Shopify whether the app is installed again, so a late webhook never wipes a reinstalled shop. |
 | Tenant isolation | The shop always comes from the verified session, never from the request. Every query is scoped by shop; route ids are format-checked. |
 | Secrets at rest | Shopify access and refresh tokens are encrypted with AES-256-GCM (random IV, auth tag, row-bound associated data) and support key rotation. |
 | Least privilege | Only `write_products` scope. No customer, order or PII access. Boot fails if extra scopes are configured. |
 | Input validation | Strict allow-list validation, size limits, GID format checks, control/bidi character stripping, 64 KB body cap. |
 | Abuse limits | Per-shop rate limit on mutations, max 20 open sales per shop, max variants per sale. |
-| Headers | Per-shop `frame-ancestors` CSP (library), HSTS, nosniff, Referrer-Policy, Permissions-Policy. |
+| Headers | Per-shop `frame-ancestors` CSP (library) for the embedded app, `frame-ancestors 'none'` on public pages, HSTS, nosniff, Referrer-Policy, Permissions-Policy. |
 | Errors & logs | Generic client errors; structured JSON logs with automatic redaction of tokens/secrets. |
 | Cron endpoint | Disabled unless `CRON_SECRET` is set; POST only, constant-time bearer check, rate limited. |
 | Privacy (GDPR) | Mandatory `customers/data_request`, `customers/redact`, `shop/redact` webhooks. `shop/redact` deletes all shop data. |
-| Concurrency | Database lease per shop so multiple instances never change the same shop's prices at once. |
-| Supply chain | Lockfile committed, `npm audit` in CI, Dependabot, non-root Docker image. |
-| Config | Environment validated at boot (HTTPS app URL in production, key length, limits). |
+| Concurrency | Database lease per shop, renewed before every price write (a worker that lost it stops), and compare-and-set status changes, so instances, cancels and uninstalls never race. |
+| Supply chain | Lockfile committed, `npm audit --omit=dev` in CI (0 findings), Dependabot, non-root Docker image. |
+| Config | Environment validated at boot: https and non-tunnel app URL in production, postgres URLs, key format, yes/no typos, scheduler-or-cron. |
+| Privacy | Data of uninstalled shops is erased by `shop/redact` (48 h) or at the latest 30 days after uninstall; merchants can delete their data themselves. |
 
 See `SECURITY.md` for operational details (key rotation, incident steps).
 
@@ -77,7 +79,8 @@ node -e "console.log('k1:' + require('crypto').randomBytes(32).toString('base64'
 
 # 4. Verify everything compiles and the tests pass
 npm run typecheck
-npm test
+npm test              # unit tests (no network, no database)
+npm run test:db       # PostgreSQL integration tests (uses DATABASE_URL from .env)
 
 # 5. Link to your app in the Partner Dashboard and run
 npm run config:link
@@ -125,7 +128,9 @@ Shopify CLI login) are cleared when the VM is recycled; the next run reinstalls 
 
 ## Deploying to production
 
-Any host that runs a Docker container and a PostgreSQL database works (Fly.io, Render, Railway, a VPS).
+**Step-by-step production guide: [`DEPLOY.md`](DEPLOY.md)** (Oracle Cloud VM + Docker + Caddy + Neon), and
+[`RUNBOOK.md`](RUNBOOK.md) for incidents. The summary below applies to any host that runs a Docker container
+and a PostgreSQL database.
 
 1. Create a managed PostgreSQL database.
 2. Set the environment variables below. Every value is checked at boot: if anything is missing or wrong the
@@ -180,6 +185,9 @@ Test on a development store (with a few products, one with several variants and 
 - [ ] Collection sale, a fixed-amount sale, and a .99 rounding sale
 - [ ] Cancel the subscription → "Create sale" redirects to the plan page
 - [ ] Uninstall and reinstall → no errors; failed sales offer "Restore original prices"
+- [ ] Plan page › Pause PriceTide with a running sale → its prices are restored, scheduled sales stay on hold;
+      Resume → approve plan → Resume → scheduled sales start
+- [ ] Plan page › Permanently delete my data (type DELETE) → sales list empty, app still works
 
 Submission: privacy policy URL, app listing with screenshots, a short screencast, test instructions for the
 reviewer, and the $19 registration fee. Expect review to take a few weeks; use the time to recruit pilot
@@ -189,6 +197,8 @@ merchants.
 
 - Changes the store's base prices. Fixed prices set in Markets price lists or B2B catalogs are not changed
   (market prices calculated from the base price follow automatically).
+- Uninstalling erases the shop's data (48 hours later via `shop/redact`, at the latest after 30 days); merchants
+  who may come back should pause instead.
 - If the app is uninstalled while a sale is running, Shopify revokes access and prices can't be restored
   until it is reinstalled (the UI warns about this; reinstalling offers a one-click restore).
 - Products with more than 5,000 variants in one sale need to be split (configurable).
