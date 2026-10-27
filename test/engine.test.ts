@@ -272,8 +272,7 @@ test("variants still discounted by a failed sale are not stacked by a new sale",
   await engine.tick();
   assert.equal(price("11").price, "80.00", "not 64.00");
   const s2Items = [...mem.items.values()].filter((i) => i.saleId === "sale_2");
-  assert.ok(s2Items.every((i) => i.status === "SKIPPED"));
-  assert.ok(s2Items.every((i) => i.originalPrice !== "80.00" || i.status === "SKIPPED"));
+  assert.ok(s2Items.every((i) => i.status === "SKIPPED" && /Already discounted by another sale/.test(i.message ?? "")));
 });
 
 test("a crash after restoring but before bookkeeping is recorded as reverted, not a conflict", async () => {

@@ -128,7 +128,7 @@ export function createSaleEngine(deps: EngineDeps) {
         originalCompareAtPrice: variant.compareAtPrice,
       };
       if (busy.has(variant.id)) {
-        return { ...base, salePrice: variant.price, saleCompareAtPrice: variant.compareAtPrice, status: ITEM_STATUS.SKIPPED, message: "Already part of another running sale" };
+        return { ...base, salePrice: variant.price, saleCompareAtPrice: variant.compareAtPrice, status: ITEM_STATUS.SKIPPED, message: "Already discounted by another sale (running, or failed and waiting to be restored)" };
       }
       const result = computeSalePrice({
         price: variant.price,
@@ -250,13 +250,11 @@ export function createSaleEngine(deps: EngineDeps) {
         throw new Error("The shop has no active subscription. Choose a plan to run sales.");
       }
       const gateway = await deps.gateway(sale.shop);
-      if ((await repo.countItems(sale.id)) === 0) {
-        await snapshot(sale, gateway);
-      }
-      const pending = await unwrittenAtOriginalPrice(
-        gateway,
-        await repo.listItems(sale.id, [ITEM_STATUS.PENDING]),
-      );
+      // A snapshot taken just now already read live prices; only a resumed activation re-checks them.
+      const freshSnapshot = (await repo.countItems(sale.id)) === 0;
+      if (freshSnapshot) await snapshot(sale, gateway);
+      const unwritten = await repo.listItems(sale.id, [ITEM_STATUS.PENDING]);
+      const pending = freshSnapshot ? unwritten : await unwrittenAtOriginalPrice(gateway, unwritten);
       const { failed } = await writePrices(
         sale.shop,
         gateway,
@@ -287,9 +285,10 @@ export function createSaleEngine(deps: EngineDeps) {
 
       if (permanent || attempts >= maxActivationAttempts) {
         const applied = await repo.listItems(sale.id, [ITEM_STATUS.APPLIED]);
+        let stopped: boolean;
         if (applied.length > 0) {
           // Some prices already changed: roll them back right away.
-          await transition(sale, SALE_STATUS.ACTIVATING, {
+          stopped = await transition(sale, SALE_STATUS.ACTIVATING, {
             status: SALE_STATUS.REVERTING,
             endsAt: deps.now(),
             attempts: 0,
@@ -297,10 +296,12 @@ export function createSaleEngine(deps: EngineDeps) {
             lastError: `Could not finish starting the sale, rolling back: ${message}`,
           });
         } else {
-          await transition(sale, SALE_STATUS.ACTIVATING, { status: SALE_STATUS.FAILED, attempts, nextAttemptAt: null, lastError: message });
+          stopped = await transition(sale, SALE_STATUS.ACTIVATING, { status: SALE_STATUS.FAILED, attempts, nextAttemptAt: null, lastError: message });
         }
-        await repo.audit({ shop: sale.shop, saleId: sale.id, action: "sale.activation_failed", detail: { message, attempts } });
-        logger.error("Sale activation failed", { shop: sale.shop, saleId: sale.id, error: message, attempts });
+        if (stopped) {
+          await repo.audit({ shop: sale.shop, saleId: sale.id, action: "sale.activation_failed", detail: { message, attempts } });
+          logger.error("Sale activation failed", { shop: sale.shop, saleId: sale.id, error: message, attempts });
+        }
       } else {
         await transition(sale, SALE_STATUS.ACTIVATING, {
           status: SALE_STATUS.ACTIVATING,
