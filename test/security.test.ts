@@ -12,6 +12,7 @@ import { parseSaleInput, readJsonBody, BodyTooLargeError, InvalidBodyError, clea
 import { createRateLimiter } from "../app/lib/rate-limit.ts";
 import { createLogger, redact } from "../app/lib/logger.ts";
 import { loadConfig } from "../app/lib/env.ts";
+import { applySecurityHeaders } from "../app/lib/security-headers.ts";
 
 const key = () => randomBytes(32).toString("base64");
 
@@ -206,4 +207,41 @@ test("billing test mode is off unless explicitly enabled, even without NODE_ENV"
   // A host that forgets NODE_ENV=production must not hand out free (test) subscriptions.
   assert.equal(loadConfig(base).billing.testMode, false);
   assert.equal(loadConfig({ ...base, BILLING_TEST_MODE: "true" }).billing.testMode, true);
+});
+
+test("logger masks secrets inside string values too", () => {
+  const masked = redact({
+    error: new Error("connect failed: postgresql://app:hunter2@db.example.com/pricetide"),
+    note: "token shpat_abc123DEF456 and Bearer eyJhbGciOi.payload.sig",
+  }) as { error: { message: string }; note: string };
+  assert.ok(!masked.error.message.includes("hunter2"));
+  assert.match(masked.error.message, /postgresql:\/\/\[redacted\]@db\.example\.com/);
+  assert.ok(!masked.note.includes("shpat_abc123DEF456"));
+  assert.ok(!masked.note.includes("eyJhbGciOi"));
+});
+
+test("only the write_products scope is allowed", () => {
+  const base = {
+    SHOPIFY_API_KEY: "k",
+    SHOPIFY_API_SECRET: "s",
+    SHOPIFY_APP_URL: "https://app.example.com",
+    DATABASE_URL: "postgres://x",
+    TOKEN_ENCRYPTION_KEYS: `k1:${key()}`,
+  };
+  assert.throws(() => loadConfig({ ...base, SCOPES: "write_products,read_products" }), /read_products/);
+});
+
+test("public pages can't be framed; embedded pages keep Shopify's per-shop policy", () => {
+  const publicHeaders = new Headers();
+  applySecurityHeaders(publicHeaders, true, "/privacy");
+  assert.equal(publicHeaders.get("Content-Security-Policy"), "frame-ancestors 'none'");
+
+  const embedded = new Headers({ "Content-Security-Policy": "frame-ancestors https://a.myshopify.com https://admin.shopify.com" });
+  applySecurityHeaders(embedded, true, "/app");
+  assert.match(embedded.get("Content-Security-Policy") ?? "", /admin\.shopify\.com/);
+
+  const appWithoutShop = new Headers();
+  applySecurityHeaders(appWithoutShop, true, "/app/sales/new");
+  assert.equal(appWithoutShop.get("Content-Security-Policy"), null, "never block the admin iframe");
+  assert.equal(appWithoutShop.get("X-Frame-Options"), null);
 });
