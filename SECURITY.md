@@ -34,4 +34,5 @@ If a key is lost, affected shops are asked to re-authenticate automatically; no 
 
 - `shop/redact` (48 h after uninstall) deletes all data for the shop.
 - `customers/*` privacy webhooks: no customer data is stored.
-- Audit log rows record who-did-what on sales for merchant support; they are deleted with the shop.
+- Audit log rows record what happened to each sale (created, started, ended…) for merchant support. They
+  store no user identity or personal data, and are deleted with the shop.
