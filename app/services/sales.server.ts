@@ -4,6 +4,7 @@ import { logger } from "../lib/logger";
 import { createRateLimiter } from "../lib/rate-limit";
 import {
   FINISHED_STATUSES,
+  LIVE_STATUSES,
   ITEM_STATUS,
   OPEN_STATUSES,
   SALE_STATUS,
@@ -163,6 +164,91 @@ export async function audit(shop: string, saleId: string | null, action: string,
   } catch (error) {
     logger.error("Failed to write audit log", { shop, action, error: (error as Error).message });
   }
+}
+
+/**
+ * Pauses PriceTide for the shop ("deactivate, resume later"): running sales end now (the scheduler
+ * restores their prices), scheduled sales are kept but won't start until resumed, and a sale that is
+ * starting right now is rolled back by the scheduler. Billing is cancelled by the caller. Idempotent.
+ */
+export async function pauseShop(shop: string): Promise<{ endedSales: number }> {
+  const now = new Date();
+  const [, ended] = await prisma.$transaction([
+    prisma.shop.upsert({ where: { shop }, create: { shop, pausedAt: now }, update: { pausedAt: now } }),
+    prisma.sale.updateMany({
+      where: { shop, status: SALE_STATUS.ACTIVE },
+      data: { endsAt: now, nextAttemptAt: null },
+    }),
+  ]);
+  await audit(shop, null, "shop.paused", { endedSales: ended.count });
+  return { endedSales: ended.count };
+}
+
+export async function resumeShop(shop: string): Promise<void> {
+  await prisma.shop.updateMany({ where: { shop }, data: { pausedAt: null } });
+  await audit(shop, null, "shop.resumed");
+}
+
+export async function isShopPaused(shop: string): Promise<boolean> {
+  const row = await prisma.shop.findUnique({ where: { shop }, select: { pausedAt: true } });
+  return row?.pausedAt != null;
+}
+
+/**
+ * "Permanently delete my data": removes all sales, their items and the history, so the merchant starts
+ * fresh. The session and plan are kept so the app keeps working. Refused while any price is still
+ * changed. The delete itself only matches sales that can't be changing prices, so a sale the scheduler
+ * starts at the same moment survives rather than leaving discounts with no record.
+ */
+export async function deleteAllSaleData(shop: string): Promise<number> {
+  const unsafe = await prisma.sale.count({
+    where: {
+      shop,
+      OR: [{ status: { in: LIVE_STATUSES } }, { items: { some: { status: ITEM_STATUS.APPLIED } } }],
+    },
+  });
+  if (unsafe > 0) {
+    throw new HttpError(
+      409,
+      "Some sales are running or still have changed prices. End them (or restore prices) first, then try again.",
+    );
+  }
+  const [deleted] = await prisma.$transaction([
+    prisma.sale.deleteMany({
+      where: {
+        shop,
+        status: { in: [SALE_STATUS.SCHEDULED, ...FINISHED_STATUSES] },
+        items: { none: { status: ITEM_STATUS.APPLIED } },
+      },
+    }),
+    prisma.auditLog.deleteMany({ where: { shop } }),
+  ]);
+  logger.info("Merchant deleted all sale data", { shop, deletedSales: deleted.count });
+  return deleted.count;
+}
+
+/** Retention safety net if shop/redact never arrives: erase shops uninstalled before `cutoff`. */
+export async function purgeUninstalledShops(cutoff: Date): Promise<number> {
+  const stale = await prisma.shop.findMany({ where: { uninstalledAt: { lt: cutoff } }, select: { shop: true } });
+  let purged = 0;
+  for (const { shop } of stale) {
+    // Re-checked inside the transaction (the Shop row is deleted first, which locks it): a shop that
+    // reinstalled since the query above has uninstalledAt cleared and is left alone.
+    const erased = await prisma.$transaction(async (tx) => {
+      const { count } = await tx.shop.deleteMany({ where: { shop, uninstalledAt: { lt: cutoff } } });
+      if (count === 0) return false;
+      await tx.saleItem.deleteMany({ where: { shop } });
+      await tx.sale.deleteMany({ where: { shop } });
+      await tx.auditLog.deleteMany({ where: { shop } });
+      await tx.session.deleteMany({ where: { shop } });
+      return true;
+    });
+    if (erased) {
+      purged += 1;
+      logger.info("Purged data of a shop uninstalled past the retention period", { shop });
+    }
+  }
+  return purged;
 }
 
 /** Deletes everything stored for a shop (shop/redact). */

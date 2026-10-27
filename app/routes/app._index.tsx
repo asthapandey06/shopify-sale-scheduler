@@ -5,7 +5,13 @@ import { authenticate } from "../shopify.server";
 import prisma from "../db.server";
 import { config, PLAN } from "../config.server";
 import { ITEM_STATUS } from "../lib/sale-types";
-import { countRunningSales, isTestBillingShop, listSales, setBillingStatus } from "../services/sales.server";
+import {
+  countRunningSales,
+  isShopPaused,
+  isTestBillingShop,
+  listSales,
+  setBillingStatus,
+} from "../services/sales.server";
 import { LocalTime, StatusBadge, describeDiscount } from "../components/ui";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
@@ -22,10 +28,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     if (changedPrices === 0) throw redirect("/app/billing");
   }
 
-  const [sales, running] = await Promise.all([listSales(shop), countRunningSales(shop)]);
+  const [sales, running, paused] = await Promise.all([listSales(shop), countRunningSales(shop), isShopPaused(shop)]);
 
   return {
     hasPlan: check.hasActivePayment,
+    paused,
     running,
     trialDays: config.billing.trialDays,
     sales: sales.map((s) => ({
@@ -43,7 +50,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export default function SalesIndex() {
-  const { sales, hasPlan, running, trialDays } = useLoaderData<typeof loader>();
+  const { sales, hasPlan, paused, running, trialDays } = useLoaderData<typeof loader>();
 
   return (
     <s-page heading="Scheduled sales">
@@ -51,7 +58,16 @@ export default function SalesIndex() {
         Create sale
       </s-button>
 
-      {!hasPlan && (
+      {paused && (
+        <s-banner tone="info" heading="PriceTide is paused">
+          <s-paragraph>Scheduled sales are on hold. Running sales are ending and their prices are being restored.</s-paragraph>
+          <s-button slot="secondary-actions" href="/app/billing">
+            Resume
+          </s-button>
+        </s-banner>
+      )}
+
+      {!hasPlan && !paused && (
         <s-banner tone="warning" heading="Choose a plan to run sales">
           <s-paragraph>
             {trialDays > 0

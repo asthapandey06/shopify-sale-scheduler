@@ -224,3 +224,106 @@ test("error responses are generic and keep details out of the client", async () 
   assert.throws(() => assertId("../../etc/passwd"), (thrown) => thrown instanceof Response && thrown.status === 404);
   assert.equal(assertId("clxyz1234567890abc"), "clxyz1234567890abc");
 });
+
+test("pause ends running sales and holds scheduled ones; resume lifts it", async () => {
+  const ids = await seedShop(SHOP);
+  await prisma.sale.update({ where: { id: ids.ACTIVATING }, data: { status: "COMPLETED" } });
+  const before = Date.now();
+  const result = await sales.pauseShop(SHOP);
+  assert.equal(result.endedSales, 1);
+  const shop = await prisma.shop.findUniqueOrThrow({ where: { shop: SHOP } });
+  assert.ok(shop.pausedAt);
+  const active = await prisma.sale.findUniqueOrThrow({ where: { id: ids.ACTIVE } });
+  assert.ok(active.endsAt.getTime() <= Date.now() && active.endsAt.getTime() >= before - 1000, "ends now");
+  assert.equal(await statusOf(ids.SCHEDULED), "SCHEDULED", "kept for later");
+
+  const repo = createPrismaSaleRepo(prisma);
+  assert.equal(await repo.isShopPaused(SHOP), true);
+  const due = await repo.findDueSales(new Date(Date.now() + 60_000), 100);
+  assert.ok(!due.some((s) => s.id === ids.SCHEDULED), "paused shop's scheduled sale isn't due");
+  assert.ok(due.some((s) => s.id === ids.ACTIVE), "but its running sale still gets restored");
+
+  await sales.resumeShop(SHOP);
+  assert.equal(await repo.isShopPaused(SHOP), false);
+});
+
+test("pause can be repeated (e.g. after cancelling the plan failed) and leaves starting sales to the scheduler", async () => {
+  const ids = await seedShop(SHOP);
+  await sales.pauseShop(SHOP);
+  const again = await sales.pauseShop(SHOP);
+  assert.equal(again.endedSales, 1, "the ACTIVE sale is still ACTIVE (ending) until the scheduler restores it");
+  assert.equal(await statusOf(ids.ACTIVATING), "ACTIVATING", "rolled back by the engine, not here");
+  const repo = createPrismaSaleRepo(prisma);
+  const due = await repo.findDueSales(new Date(), 100);
+  assert.ok(due.some((s) => s.id === ids.ACTIVATING), "so the engine picks it up right away");
+});
+
+test("the retention purge leaves a shop alone if it reinstalled meanwhile", async () => {
+  await seedShop(SHOP);
+  const cutoff = new Date(Date.now() - 30 * 86_400_000);
+  await prisma.shop.update({ where: { shop: SHOP }, data: { uninstalledAt: new Date(cutoff.getTime() - 86_400_000) } });
+  const realFindMany = prisma.shop.findMany.bind(prisma.shop);
+  (prisma.shop as unknown as { findMany: typeof realFindMany }).findMany = (async (args: Parameters<typeof realFindMany>[0]) => {
+    const rows = await realFindMany(args);
+    await markInstalled(SHOP); // the merchant reinstalls between the query and the purge
+    return rows;
+  }) as typeof realFindMany;
+  try {
+    await sales.purgeUninstalledShops(cutoff);
+  } finally {
+    (prisma.shop as unknown as { findMany: typeof realFindMany }).findMany = realFindMany;
+  }
+  assert.ok(await prisma.shop.findUnique({ where: { shop: SHOP } }));
+  assert.equal(await prisma.session.count({ where: { shop: SHOP } }), 1);
+  assert.equal(await prisma.sale.count({ where: { shop: SHOP } }), 5);
+});
+
+test("delete all data: refused while prices are changed, otherwise removes sales and history only", async () => {
+  const ids = await seedShop(SHOP);
+  await seedShop(OTHER);
+  await assert.rejects(sales.deleteAllSaleData(SHOP), (e: Error) => e instanceof sales.HttpError && e.status === 409);
+  assert.equal(await prisma.sale.count({ where: { shop: SHOP } }), 5);
+
+  // Finish everything that could hold changed prices.
+  await prisma.sale.updateMany({ where: { shop: SHOP, status: { in: ["ACTIVATING", "ACTIVE", "REVERTING"] } }, data: { status: "COMPLETED" } });
+  await prisma.saleItem.updateMany({ where: { shop: SHOP }, data: { status: "REVERTED" } });
+  assert.equal(await sales.deleteAllSaleData(SHOP), 5);
+  assert.equal(await prisma.sale.count({ where: { shop: SHOP } }), 0);
+  assert.equal(await prisma.saleItem.count({ where: { shop: SHOP } }), 0);
+  assert.equal(await prisma.auditLog.count({ where: { shop: SHOP } }), 0);
+  assert.equal(await prisma.session.count({ where: { shop: SHOP } }), 1, "the app keeps working");
+  assert.ok(await prisma.shop.findUnique({ where: { shop: SHOP } }));
+  assert.equal(await prisma.sale.count({ where: { shop: OTHER } }), 5, "other shops untouched");
+  void ids;
+});
+
+test("delete all data never removes a sale that started meanwhile", async () => {
+  const ids = await seedShop(SHOP);
+  await prisma.sale.updateMany({ where: { shop: SHOP, status: { in: ["ACTIVATING", "ACTIVE", "REVERTING"] } }, data: { status: "COMPLETED" } });
+  await prisma.saleItem.updateMany({ where: { shop: SHOP }, data: { status: "REVERTED" } });
+  // The scheduler starts the scheduled sale between the safety check and the delete.
+  const realCount = prisma.sale.count.bind(prisma.sale);
+  (prisma.sale as unknown as { count: typeof realCount }).count = (async (args: Parameters<typeof realCount>[0]) => {
+    const n = await realCount(args);
+    await prisma.sale.update({ where: { id: ids.SCHEDULED }, data: { status: "ACTIVATING" } });
+    return n;
+  }) as typeof realCount;
+  try {
+    await sales.deleteAllSaleData(SHOP);
+  } finally {
+    (prisma.sale as unknown as { count: typeof realCount }).count = realCount;
+  }
+  assert.equal(await statusOf(ids.SCHEDULED), "ACTIVATING", "the starting sale and its record survive");
+});
+
+test("shops uninstalled more than 30 days ago are purged", async () => {
+  await seedShop(SHOP);
+  await seedShop(OTHER);
+  await prisma.shop.update({ where: { shop: SHOP }, data: { uninstalledAt: new Date(Date.now() - 31 * 86_400_000) } });
+  await prisma.shop.update({ where: { shop: OTHER }, data: { uninstalledAt: new Date(Date.now() - 29 * 86_400_000) } });
+  const purged = await sales.purgeUninstalledShops(new Date(Date.now() - 30 * 86_400_000));
+  assert.ok(purged >= 1);
+  assert.equal(await prisma.shop.count({ where: { shop: SHOP } }), 0);
+  assert.equal(await prisma.sale.count({ where: { shop: SHOP } }), 0);
+  assert.equal(await prisma.sale.count({ where: { shop: OTHER } }), 5, "within the retention window: kept");
+});

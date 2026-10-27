@@ -2,7 +2,7 @@ import type { ActionFunctionArgs } from "react-router";
 import { config } from "../config.server";
 import { safeEqual } from "../lib/crypto";
 import { createRateLimiter } from "../lib/rate-limit";
-import { runTick } from "../services/scheduler.server";
+import { runRetentionPurge, runTick } from "../services/scheduler.server";
 
 /**
  * POST /jobs/tick — runs one scheduler pass. For hosts without long-running
@@ -27,5 +27,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   if (!limiter.take("cron")) return new Response("Too many requests", { status: 429 });
 
   const result = await runTick();
-  return Response.json({ ok: result !== null, ...(result ?? {}) }, { headers: { "Cache-Control": "no-store" } });
+  const purgedShops = await runRetentionPurge();
+  return Response.json(
+    { ok: result !== null, ...(result ?? {}), purgedShops },
+    { headers: { "Cache-Control": "no-store" } },
+  );
 };

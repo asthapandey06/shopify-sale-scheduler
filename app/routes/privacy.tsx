@@ -69,8 +69,10 @@ export default function Privacy() {
       <h2 style={s.h2}>Retention and deletion</h2>
       <p>
         When you uninstall the app, Shopify revokes its access immediately. Shopify then asks us to erase your store&apos;s
-        data 48 hours later, and we delete everything we hold for your store at that point. You can also delete
-        individual finished sales at any time from within the app.
+        data 48 hours later, and we delete everything we hold for your store at that point; if that request never
+        arrives, we delete it 30 days after uninstall. Deleted data can&apos;t be retrieved. Before uninstalling you
+        can, on the app&apos;s Plan page, pause the app to keep your data and resume later, or permanently delete
+        all your sales and their history. You can also delete individual finished sales at any time.
       </p>
 
       <h2 style={s.h2}>Your rights</h2>

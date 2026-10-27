@@ -8,6 +8,21 @@ import type { TickResult } from "../lib/sale-engine";
 import { unauthenticated } from "../shopify.server";
 import { createPrismaSaleRepo } from "./sale-repo.server";
 import { createShopifyGateway } from "./shopify-gateway.server";
+import { purgeUninstalledShops } from "./sales.server";
+
+/** Data of uninstalled shops is erased after this, even if Shopify's shop/redact never arrives. */
+const RETENTION_MS = 30 * 86_400_000;
+const PURGE_INTERVAL_MS = 60 * 60_000;
+
+/** Retention safety net; failures are logged and retried on the next run. */
+export async function runRetentionPurge(): Promise<number> {
+  try {
+    return await purgeUninstalledShops(new Date(Date.now() - RETENTION_MS));
+  } catch (error) {
+    logger.error("Retention purge failed", { error: (error as Error).message });
+    return 0;
+  }
+}
 
 /**
  * Background worker that starts and ends sales on time.
@@ -21,6 +36,7 @@ import { createShopifyGateway } from "./shopify-gateway.server";
 interface SchedulerState {
   runner: TickRunner;
   timer: ReturnType<typeof setInterval> | null;
+  purgeTimer: ReturnType<typeof setInterval> | null;
 }
 
 declare global {
@@ -41,7 +57,7 @@ function getState(): SchedulerState {
       owner: `${hostname()}:${process.pid}:${randomUUID().slice(0, 8)}`,
       maxVariantsPerSale: config.limits.maxVariantsPerSale,
     });
-    globalThis.saleSchedulerGlobal = { runner: createTickRunner(() => engine.tick(), logger), timer: null };
+    globalThis.saleSchedulerGlobal = { runner: createTickRunner(() => engine.tick(), logger), timer: null, purgeTimer: null };
   }
   return globalThis.saleSchedulerGlobal;
 }
@@ -62,11 +78,15 @@ export function startScheduler(): void {
   if (state.timer) return;
   state.timer = setInterval(() => void runTick(), config.schedulerIntervalMs);
   state.timer.unref?.();
+  state.purgeTimer = setInterval(() => void runRetentionPurge(), PURGE_INTERVAL_MS);
+  state.purgeTimer.unref?.();
   logger.info("PriceTide scheduler started", { intervalMs: config.schedulerIntervalMs });
 
   const shutdown = async (signal: string) => {
     if (state.timer) clearInterval(state.timer);
+    if (state.purgeTimer) clearInterval(state.purgeTimer);
     state.timer = null;
+    state.purgeTimer = null;
     logger.info("Scheduler stopping; waiting for current pass", { signal });
     // Let an in-flight pass finish so shop leases are released cleanly.
     const finished = await state.runner.stop(20_000);
