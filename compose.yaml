@@ -4,17 +4,18 @@
 services:
   db:
     image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: pricetide
+    # POSTGRES_USER, POSTGRES_PASSWORD and POSTGRES_DB come from .env (only read when the data folder is
+    # first created; changing them later doesn't change an existing database).
+    env_file:
+      - path: .env
+        required: true
     # Only reachable from this machine. Data lives in $HOME so it survives Cloud Shell restarts.
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
       - ${HOME}/.pricetide-dev/pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d pricetide"]
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
       interval: 5s
       timeout: 3s
       retries: 10
@@ -28,10 +29,10 @@ services:
         condition: service_healthy
     env_file:
       - path: .env
-        required: false
+        required: true
     environment:
-      # Overrides .env so the container always talks to the db service above.
-      DATABASE_URL: postgresql://postgres:postgres@db:5432/pricetide
+      # Overrides .env so the container always talks to the db service above, with the same credentials.
+      DATABASE_URL: postgresql://${POSTGRES_USER:?set POSTGRES_USER in .env}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/${POSTGRES_DB:?set POSTGRES_DB in .env}
     volumes:
       - .:/home/node/app
       - node_modules:/home/node/app/node_modules

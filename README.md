@@ -93,9 +93,14 @@ always test charges on development stores.
 development only; production uses `Dockerfile`. Your code is mounted into the container, so edits hot-reload.
 
 ```bash
-# 1. Environment: cp .env.example .env and set TOKEN_ENCRYPTION_KEYS as above.
-#    Set DATABASE_URL=postgresql://postgres:postgres@db:5432/pricetide so the app and Prisma both use the
-#    Docker database (compose also forces this value inside the container).
+# 1. Environment: cp .env.example .env and set TOKEN_ENCRYPTION_KEYS as above. Add the database
+#    credentials (compose reads them from .env for both the db and app services):
+#      POSTGRES_USER=pricetide
+#      POSTGRES_PASSWORD=<a password; letters and digits only, as it is placed in a URL>
+#      POSTGRES_DB=pricetide
+#      DATABASE_URL=postgresql://pricetide:<same password>@db:5432/pricetide
+#    Inside the container compose builds DATABASE_URL from the POSTGRES_* values, so both always match.
+#    The credentials are applied only when ~/.pricetide-dev/pgdata is first created.
 
 # 2. Start the database (data is kept in ~/.pricetide-dev/pgdata, which survives Cloud Shell restarts)
 docker compose up -d db
