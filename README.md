@@ -200,7 +200,9 @@ merchants.
 - Uninstalling erases the shop's data (48 hours later via `shop/redact`, at the latest after 30 days); merchants
   who may come back should pause instead.
 - If the app is uninstalled while a sale is running, Shopify revokes access and prices can't be restored
-  until it is reinstalled (the UI warns about this; reinstalling offers a one-click restore).
+  until it is reinstalled (the UI warns about this; reinstalling offers a one-click restore). Shopify asks us
+  to erase the shop's data 48 hours after uninstall, so the restore is only possible if the merchant
+  reinstalls within that time; after that the original prices are gone.
 - Products with more than 5,000 variants in one sale need to be split (configurable).
 
 ## Project layout

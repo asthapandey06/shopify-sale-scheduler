@@ -93,6 +93,9 @@ explain what happened.
    - **App uninstalled mid-sale**: the sale is `FAILED` with "The app was uninstalled while this sale was
      running…"; Shopify revoked access, so nothing can be restored until the merchant **reinstalls** and
      clicks **Restore original prices** on that sale. Variants it still holds are protected from other sales.
+     This only works if they reinstall within 48 hours: after that `shop/redact` erases the snapshot (the logs
+     then show `Purging a shop whose sale prices were never restored` if the 30-day purge did it). Without
+     the snapshot, the merchant has to reset those prices by hand in the Shopify admin.
    - **Scheduler not running**: section 4.
 3. After it completes, `Sale reverted` logs `restored` and `conflicts`. Conflicts are prices the merchant
    changed during the sale; they were left as the merchant set them, on purpose.
