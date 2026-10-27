@@ -1,7 +1,15 @@
-import type { LoaderFunctionArgs } from "react-router";
+import type { LoaderFunctionArgs, MetaFunction } from "react-router";
 import { redirect } from "react-router";
 
 import styles from "./styles.module.css";
+
+export const meta: MetaFunction = () => [
+  { title: "PriceTide: Scheduled Sales for Shopify" },
+  {
+    name: "description",
+    content: "Schedule sales on Shopify products or collections and restore the original prices when they end.",
+  },
+];
 
 /**
  * Public landing page. Installs always start from the Shopify App Store or
