@@ -123,21 +123,38 @@ Run on a development store with production-like settings (deployed app, real Pos
 - [ ] Decline the charge → back on Plan page, no error screen
 - [ ] Start-now sale → prices change within ~30 s; compare-at correct
 - [ ] Variant that already had a compare-at keeps the higher one; restored exactly after
-- [ ] Variant with no compare-at → compare-at cleared again after the sale
+- [ ] Variant with no compare-at → compare-at cleared again after the sale (confirms Shopify clears it when
+      the app sends `compareAtPrice: null`; not stated in the API docs)
 - [ ] Edit a price mid-sale → kept after the end, shown as "Edited during sale"
 - [ ] Scheduled sale starts and ends on time; cancel a scheduled one
 - [ ] Collection sale; fixed-amount sale; .99 rounding
 - [ ] Open `/app/sales/doesnotexist` → friendly "Sale not found" page
-- [ ] Uninstall → reinstall → OAuth, then Plan page; no error screens
+- [ ] Uninstall → reinstall → OAuth, then Plan page; no error screens; your earlier sales are still there
+      if you reinstalled within 48 hours
+- [ ] Plan page › Pause with a running sale → prices restored, scheduled sale on hold, plan cancelled;
+      Resume → approve → Resume → scheduled sale starts
+- [ ] Plan page › Permanently delete my data → typed DELETE required; sales list empty afterwards
 - [ ] `/privacy` loads publicly over https; `/healthz` returns ok
 - [ ] Partner Dashboard: run the automated pre-submission checks until all pass
 - [ ] Check a page in Chrome incognito (third-party cookies blocked) — app still works (1.1.1)
 
 ## 5. Before you click submit
 
+Code-side status (Oct 27, 2026): typecheck, lint, build, 72 unit tests and 16 PostgreSQL integration tests
+pass; `npm audit --omit=dev` reports 0 vulnerabilities; production Docker image builds and runs healthy.
+
 - [x] App name checked on apps.shopify.com (Oct 27, 2026); confirm when saving the listing (4.1.2)
-- [ ] App deployed on https with `NODE_ENV=production`, `SUPPORT_EMAIL`, `APP_OWNER_NAME` set
-- [ ] `npm run deploy` run so webhooks, scopes and app URL are pushed
-- [ ] $19 App Store registration paid; emergency contact set
-- [ ] Listing: icon (1200×1200, no pricing/claims), 3–6 screenshots, screencast, privacy URL, pricing
-- [ ] Live test plan above passed
+- [ ] Separate dev app linked for `npm run dev`, so development never repoints the production app (DEPLOY.md › 0)
+- [ ] App deployed on https following DEPLOY.md: `NODE_ENV=production`, `SUPPORT_EMAIL`, `APP_OWNER_NAME`,
+      Neon pooled `DATABASE_URL` + direct `DIRECT_URL`, encryption key saved in a password manager
+- [ ] `shopify.app.toml` has the production `application_url` and `redirect_urls`
+      (`/auth/callback`), then `npm run deploy` run so webhooks, scopes and URLs are pushed
+- [ ] `https://<app>/healthz` returns ok; uptime monitor and nightly backups set up (DEPLOY.md › 7–8)
+- [ ] Partner Dashboard automated pre-submission checks all pass
+- [ ] Live test plan above passed on a development store against the deployed app
+- [ ] $19 App Store registration paid; emergency developer contact set (4.5.6)
+- [ ] Listing: icon (1200×1200, no pricing/claims), 3–6 screenshots from the dev store, screencast (section 3),
+      privacy policy URL `https://<app>/privacy`, Pricing section matching `PLAN_PRICE`/`TRIAL_DAYS`
+      ($9.99 / 30 days, 7-day trial), support email
+- [ ] Listing copy explains what sets PriceTide apart from similar apps (merchant edits kept, exact restore,
+      pause/resume), without superlatives (4.3.3–4.3.4)
