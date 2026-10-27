@@ -104,7 +104,7 @@ export default function Billing() {
               </s-banner>
               {confirmCancel ? (
                 <s-banner tone="warning" heading="Cancel your subscription?">
-                  <s-paragraph>You won't be able to schedule new sales without a plan.</s-paragraph>
+                  <s-paragraph>You won&apos;t be able to schedule new sales without a plan.</s-paragraph>
                   <fetcher.Form method="post" onSubmit={() => setConfirmCancel(false)}>
                     <input type="hidden" name="intent" value="cancel" />
                     <s-stack direction="inline" gap="small-200">

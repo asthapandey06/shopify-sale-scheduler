@@ -34,13 +34,13 @@ export default function Privacy() {
       <h1>Privacy policy — PriceTide</h1>
       <p>Last updated: October 21, 2026</p>
       <p>
-        PriceTide ("the app") is provided by {ownerName}. This policy explains what the app collects when a
+        PriceTide (&quot;the app&quot;) is provided by {ownerName}. This policy explains what the app collects when a
         merchant installs it on a Shopify store, and how that information is used.
       </p>
 
       <h2 style={s.h2}>Information we collect</h2>
       <ul>
-        <li>Your store's Shopify domain and the access token Shopify issues when you install the app.</li>
+        <li>Your store&apos;s Shopify domain and the access token Shopify issues when you install the app.</li>
         <li>The sales you create: name, discount, schedule and the products or collections you choose.</li>
         <li>
           For each product variant in a running sale: its price and compare-at price before and during the sale, so the
@@ -68,7 +68,7 @@ export default function Privacy() {
 
       <h2 style={s.h2}>Retention and deletion</h2>
       <p>
-        When you uninstall the app, Shopify revokes its access immediately. Shopify then asks us to erase your store's
+        When you uninstall the app, Shopify revokes its access immediately. Shopify then asks us to erase your store&apos;s
         data 48 hours later, and we delete everything we hold for your store at that point. You can also delete
         individual finished sales at any time from within the app.
       </p>

@@ -134,6 +134,13 @@ test("text is cleaned of control and bidi characters", () => {
   assert.equal(cleanText(42, 10), "");
 });
 
+test("cleanText strips every unsafe range and keeps tabs and non-ASCII text", () => {
+  const unsafe = ["\u0000", "\u0008", "\n", "\r", "\u001f", "\u007f", "‪", "‮", "⁦", "⁩"];
+  for (const ch of unsafe) assert.equal(cleanText(`a${ch}b`, 10), "ab", `U+${ch.charCodeAt(0).toString(16)}`);
+  assert.equal(cleanText("a\tb", 10), "a\tb");
+  assert.equal(cleanText("Été 🎉 セール  ", 20), "Été 🎉 セール  ".trim());
+});
+
 test("JSON body size limit", async () => {
   const big = new Request("https://x.test", { method: "POST", body: JSON.stringify({ a: "x".repeat(70_000) }) });
   await assert.rejects(readJsonBody(big), BodyTooLargeError);

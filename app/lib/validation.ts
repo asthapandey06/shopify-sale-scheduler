@@ -46,11 +46,22 @@ const GID_RE = {
 } as const;
 
 // Control characters (except tab) and bidi overrides are stripped from text.
-const UNSAFE_CHARS_RE = /[\u0000-\u0008\u000A-\u001F\u007F‪-‮⁦-⁩]/g;
+function isUnsafeChar(code: number): boolean {
+  return (
+    (code <= 0x1f && code !== 0x09) ||
+    code === 0x7f ||
+    (code >= 0x202a && code <= 0x202e) ||
+    (code >= 0x2066 && code <= 0x2069)
+  );
+}
 
 export function cleanText(value: unknown, max: number): string {
   if (typeof value !== "string") return "";
-  return value.replace(UNSAFE_CHARS_RE, "").trim().slice(0, max);
+  let out = "";
+  for (let i = 0; i < value.length; i++) {
+    if (!isUnsafeChar(value.charCodeAt(i))) out += value[i];
+  }
+  return out.trim().slice(0, max);
 }
 
 function isOneOf<T extends string>(values: readonly T[], value: unknown): value is T {

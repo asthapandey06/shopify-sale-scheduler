@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 import type { SaleStatus } from "../lib/sale-types";
 
 type Tone = "info" | "success" | "warning" | "critical" | "neutral" | "auto";
@@ -24,16 +24,17 @@ export function StatusBadge({ status }: { status: SaleStatus }) {
  * hydration (avoids hydration mismatches).
  */
 export function LocalTime({ iso }: { iso: string }) {
-  const [text, setText] = useState(iso.slice(0, 16).replace("T", " ") + " UTC");
-  useEffect(() => {
-    setText(
-      new Date(iso).toLocaleString(undefined, {
-        dateStyle: "medium",
-        timeStyle: "short",
-      }),
-    );
-  }, [iso]);
+  const text = useSyncExternalStore(
+    subscribeNever,
+    () => new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }),
+    () => iso.slice(0, 16).replace("T", " ") + " UTC",
+  );
   return <time dateTime={iso}>{text}</time>;
+}
+
+/** No-op subscription for useSyncExternalStore values that only differ between server and client. */
+export function subscribeNever(): () => void {
+  return () => {};
 }
 
 export function formatMoney(amount: string, currencyCode: string | null): string {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs } from "react-router";
 import { data, useActionData, useLoaderData, useNavigation, useSubmit } from "react-router";
 import { useAppBridge } from "@shopify/app-bridge-react";
@@ -10,7 +10,7 @@ import { LIMITS, parseSaleInput, readJsonBody, type TargetType } from "../lib/va
 import { createSale, enforceRateLimit, isTestBillingShop } from "../services/sales.server";
 import { toErrorResponse, type ActionFailure } from "../services/http.server";
 import { kickScheduler } from "../services/scheduler.server";
-import { ROUNDING_LABEL, formatMoney } from "../components/ui";
+import { ROUNDING_LABEL, formatMoney, subscribeNever } from "../components/ui";
 
 async function requirePlan(request: Request) {
   const context = await authenticate.admin(request);
@@ -51,14 +51,31 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   }
 };
 
-interface Picked {
+type Picked = {
   id: string;
   title: string;
-}
+};
 
 function toLocalInput(date: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+type DefaultTimes = { startsAt: string; endsAt: string };
+
+const NO_DEFAULT_TIMES: DefaultTimes = { startsAt: "", endsAt: "" };
+let cachedDefaultTimes: DefaultTimes = NO_DEFAULT_TIMES;
+
+/** Next full hour to two days later, in the browser's time zone. Same object until the hour changes. */
+function getDefaultTimes(): DefaultTimes {
+  const start = new Date();
+  start.setMinutes(0, 0, 0);
+  start.setHours(start.getHours() + 1);
+  const startsAt = toLocalInput(start);
+  if (cachedDefaultTimes.startsAt !== startsAt) {
+    cachedDefaultTimes = { startsAt, endsAt: toLocalInput(new Date(start.getTime() + 2 * 86_400_000)) };
+  }
+  return cachedDefaultTimes;
 }
 
 function localInputToIso(value: string): string | null {
@@ -92,18 +109,13 @@ export default function NewSale() {
   const [targetType, setTargetType] = useState<TargetType>("PRODUCTS");
   const [targets, setTargets] = useState<Picked[]>([]);
   const [startNow, setStartNow] = useState(false);
-  const [startsAt, setStartsAt] = useState("");
-  const [endsAt, setEndsAt] = useState("");
-
-  // Defaults depend on the browser's clock and time zone, so set them after hydration.
-  useEffect(() => {
-    const start = new Date();
-    start.setMinutes(0, 0, 0);
-    start.setHours(start.getHours() + 1);
-    const end = new Date(start.getTime() + 2 * 86_400_000);
-    setStartsAt(toLocalInput(start));
-    setEndsAt(toLocalInput(end));
-  }, []);
+  // Defaults depend on the browser's clock and time zone, so they are empty on the server
+  // and filled in after hydration. null means the merchant hasn't edited the field yet.
+  const defaults = useSyncExternalStore(subscribeNever, getDefaultTimes, () => NO_DEFAULT_TIMES);
+  const [startsAtInput, setStartsAt] = useState<string | null>(null);
+  const [endsAtInput, setEndsAt] = useState<string | null>(null);
+  const startsAt = startsAtInput ?? defaults.startsAt;
+  const endsAt = endsAtInput ?? defaults.endsAt;
 
   const example = useMemo(() => {
     const result = computeSalePrice({
@@ -269,7 +281,7 @@ export default function NewSale() {
             {errors.endsAt && <s-text tone="critical">{errors.endsAt}</s-text>}
           </label>
 
-          <s-text color="subdued">Times are in your computer's time zone.</s-text>
+          <s-text color="subdued">Times are in your computer&apos;s time zone.</s-text>
         </s-stack>
       </s-section>
     </s-page>
