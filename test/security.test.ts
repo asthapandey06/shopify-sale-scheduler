@@ -135,10 +135,11 @@ test("text is cleaned of control and bidi characters", () => {
 });
 
 test("cleanText strips every unsafe range and keeps tabs and non-ASCII text", () => {
-  const unsafe = ["\u0000", "\u0008", "\n", "\r", "\u001f", "\u007f", "‪", "‮", "⁦", "⁩"];
+  const unsafe = ["\u0000", "\u0008", "\n", "\r", "\u001f", "\u007f", "\u202a", "\u202e", "\u2066", "\u2069"];
   for (const ch of unsafe) assert.equal(cleanText(`a${ch}b`, 10), "ab", `U+${ch.charCodeAt(0).toString(16)}`);
   assert.equal(cleanText("a\tb", 10), "a\tb");
-  assert.equal(cleanText("Été 🎉 セール ", 20), "Été 🎉 セール ".trim());
+  // Escapes, not literal characters, so editors can't silently strip them (U+2029 is a paragraph separator).
+  assert.equal(cleanText("Été 🎉 セール \u2029", 20), "Été 🎉 セール \u2029".trim());
 });
 
 test("JSON body size limit", async () => {
