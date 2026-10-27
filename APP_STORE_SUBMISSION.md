@@ -50,7 +50,7 @@ Legend: ✅ met in code · 🔧 fixed during this audit · 🟡 you must do it (
 | Req | Requirement | Status | What to do |
 | --- | --- | --- | --- |
 | 4.1.1 | Same name in dashboard and listing | 🟡 | Use one name everywhere, including `name` in `shopify.app.toml` |
-| 4.1.2 | Unique name | 🟡 | Search apps.shopify.com for "PriceTide" yourself before submitting. An earlier note said other apps use it; a re-check on Oct 27, 2026 found no listing with that name but the store search didn't load, so it is unconfirmed either way |
+| 4.1.2 | Unique name | ✅ (confirm on save) | Owner searched apps.shopify.com for "PriceTide" on Oct 27, 2026: no app with that name in the results (similar names only: Pricefy, PricePirate, Pricewise, PriceIQ…). The Partner Dashboard rejects duplicate listing names when you save. Close competitors to position against: PriceGrid (bulk edit + sales that restore), Wi Flash Sale |
 | 4.2.1–4.2.3 | Accurate pricing, only in the Pricing section, not in images | 🟡 | Use the pricing text in section 2; keep prices out of screenshots and description |
 | 4.3.1 | Online Store requirement | 🟡 | Do **not** mark Online Store as required (the app works on any sales channel's base prices) |
 | 4.3.2 | Languages | 🟡 | English only |
@@ -135,7 +135,7 @@ Run on a development store with production-like settings (deployed app, real Pos
 
 ## 5. Before you click submit
 
-- [ ] App name confirmed unique on apps.shopify.com and used everywhere (4.1.2)
+- [x] App name checked on apps.shopify.com (Oct 27, 2026); confirm when saving the listing (4.1.2)
 - [ ] App deployed on https with `NODE_ENV=production`, `SUPPORT_EMAIL`, `APP_OWNER_NAME` set
 - [ ] `npm run deploy` run so webhooks, scopes and app URL are pushed
 - [ ] $19 App Store registration paid; emergency contact set
