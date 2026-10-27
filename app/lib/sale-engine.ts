@@ -72,6 +72,10 @@ function groupByProduct<T extends { productId: string }>(items: T[]): Map<string
   return groups;
 }
 
+function sameCompareAt(a: string | null, b: string | null): boolean {
+  return a === null || b === null ? a === b : moneyEquals(a, b);
+}
+
 function errorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   return message.slice(0, 500);
@@ -278,6 +282,12 @@ export function createSaleEngine(deps: EngineDeps) {
             toRestore.push(item);
           } else if (item.status !== ITEM_STATUS.APPLIED && moneyEquals(current.price, item.originalPrice)) {
             statusUpdates.push({ id: item.id, status: ITEM_STATUS.SKIPPED, message: "Price was never changed" });
+          } else if (
+            moneyEquals(current.price, item.originalPrice) &&
+            sameCompareAt(current.compareAtPrice, item.originalCompareAtPrice)
+          ) {
+            // Already restored (e.g. a crash after the restore but before this status was saved).
+            statusUpdates.push({ id: item.id, status: ITEM_STATUS.REVERTED, message: null });
           } else {
             statusUpdates.push({
               id: item.id,

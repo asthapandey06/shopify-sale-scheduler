@@ -275,3 +275,18 @@ test("variants still discounted by a failed sale are not stacked by a new sale",
   assert.ok(s2Items.every((i) => i.status === "SKIPPED"));
   assert.ok(s2Items.every((i) => i.originalPrice !== "80.00" || i.status === "SKIPPED"));
 });
+
+test("a crash after restoring but before bookkeeping is recorded as reverted, not a conflict", async () => {
+  const { mem, store, time, engine, addSale, price } = setup();
+  addSale();
+  await engine.tick();
+  // Shopify already has the originals back, but the items are still APPLIED (crash before the status write).
+  store.variants.get("gid://shopify/ProductVariant/11")!.price = "100.00";
+  store.variants.get("gid://shopify/ProductVariant/11")!.compareAtPrice = null;
+  time.set("2026-11-01T12:00:00Z");
+  await engine.tick();
+  const item = [...mem.items.values()].find((i) => i.variantId.endsWith("/11"))!;
+  assert.equal(item.status, "REVERTED");
+  assert.equal(price("11").price, "100.00");
+  assert.equal(mem.sales.get("sale_1")!.status, "COMPLETED");
+});
