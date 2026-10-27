@@ -77,7 +77,8 @@ model Sale {
   updatedAt     DateTime   @updatedAt
   items         SaleItem[]
 
-  @@index([shop, createdAt])
+  // Sales list: where shop, order by startsAt desc.
+  @@index([shop, startsAt])
   @@index([status, startsAt])
   @@index([status, endsAt])
 }
