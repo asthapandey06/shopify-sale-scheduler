@@ -97,7 +97,8 @@ export function loadConfig(env: Record<string, string | undefined>): AppConfig {
   const amount = Number(env.PLAN_PRICE ?? "9.99");
   if (!Number.isFinite(amount) || amount <= 0 || amount > 10_000) errors.push("PLAN_PRICE must be a positive number");
 
-  const testMode = bool(env.BILLING_TEST_MODE, !isProduction);
+  // Off unless asked for: development stores get test charges via their detected dev-store flag.
+  const testMode = bool(env.BILLING_TEST_MODE, false);
 
   const config: AppConfig = {
     isProduction,

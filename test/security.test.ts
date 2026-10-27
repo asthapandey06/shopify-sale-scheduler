@@ -194,3 +194,16 @@ test("config fails fast with every problem listed", () => {
   assert.equal(config.billing.testMode, false);
   assert.deepEqual(config.scopes, ["write_products"]);
 });
+
+test("billing test mode is off unless explicitly enabled, even without NODE_ENV", () => {
+  const base = {
+    SHOPIFY_API_KEY: "k",
+    SHOPIFY_API_SECRET: "s",
+    SHOPIFY_APP_URL: "https://app.example.com",
+    DATABASE_URL: "postgres://x",
+    TOKEN_ENCRYPTION_KEYS: `k1:${key()}`,
+  };
+  // A host that forgets NODE_ENV=production must not hand out free (test) subscriptions.
+  assert.equal(loadConfig(base).billing.testMode, false);
+  assert.equal(loadConfig({ ...base, BILLING_TEST_MODE: "true" }).billing.testMode, true);
+});
