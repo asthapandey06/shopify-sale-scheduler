@@ -57,7 +57,9 @@ export function createMemoryRepo() {
     },
     async renewShop(shop, owner, leaseUntil) {
       const row = shopRow(shop);
-      if (row.lockOwner === owner) row.lockedUntil = leaseUntil;
+      if (row.lockOwner !== owner) return false;
+      row.lockedUntil = leaseUntil;
+      return true;
     },
     async releaseShop(shop, owner) {
       const row = shopRow(shop);

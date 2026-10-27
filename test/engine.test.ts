@@ -330,3 +330,22 @@ test("an update applied by Shopify whose response was lost is not written twice"
   assert.equal(price("11").price, "100.00");
   assert.equal(price("12").price, "50.00");
 });
+
+test("a worker that lost its shop lease stops before writing prices", async () => {
+  const { mem, store, time, engine, addSale, price } = setup({ leaseMs: 60_000 });
+  addSale();
+  const realList = store.gateway.listTargetVariants;
+  store.gateway.listTargetVariants = async (...args) => {
+    // A slow snapshot: the lease expires and another instance takes over the shop.
+    time.advance(61_000);
+    await mem.repo.claimShop(SHOP, "worker-b", new Date(time.now().getTime() + 60_000), time.now());
+    return realList(...args);
+  };
+  await engine.tick();
+  assert.equal(price("11").price, "100.00");
+  assert.equal(price("12").price, "50.00");
+  assert.equal(store.calls.updates, 0);
+  const sale = mem.sales.get("sale_1")!;
+  assert.equal(sale.attempts, 0, "losing the lease is not a failed attempt");
+  assert.equal(mem.shopLock(SHOP).owner, "worker-b", "the new owner's lease is untouched");
+});

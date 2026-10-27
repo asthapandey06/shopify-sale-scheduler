@@ -86,7 +86,8 @@ export interface AuditEntry {
 export interface SaleRepo {
   findDueSales(now: Date, limit: number): Promise<SaleRecord[]>;
   claimShop(shop: string, owner: string, leaseUntil: Date, now: Date): Promise<boolean>;
-  renewShop(shop: string, owner: string, leaseUntil: Date): Promise<void>;
+  /** Extends the lease; false if this owner no longer holds it (another worker took over). */
+  renewShop(shop: string, owner: string, leaseUntil: Date): Promise<boolean>;
   releaseShop(shop: string, owner: string): Promise<void>;
   getSale(shop: string, saleId: string): Promise<SaleRecord | null>;
   updateSale(shop: string, saleId: string, patch: SalePatch): Promise<void>;
@@ -125,6 +126,14 @@ export interface AdminGateway {
   /** Current prices; variants that no longer exist are absent from the map. */
   getVariantPrices(variantIds: string[]): Promise<Map<string, VariantPrice>>;
   updateVariantPrices(productId: string, updates: VariantUpdate[]): Promise<UpdateResult>;
+}
+
+/** This worker no longer holds the shop lease; it must stop touching the shop's prices. */
+export class LeaseLostError extends Error {
+  constructor(shop: string) {
+    super(`Lost the lease for ${shop}`);
+    this.name = "LeaseLostError";
+  }
 }
 
 /** Errors that will not succeed on retry (bad data, limits exceeded). */

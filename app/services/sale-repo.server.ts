@@ -121,7 +121,8 @@ export function createPrismaSaleRepo(db: PrismaClient = prisma): SaleRepo {
     },
 
     async renewShop(shop, owner, leaseUntil) {
-      await db.shop.updateMany({ where: { shop, lockOwner: owner }, data: { lockedUntil: leaseUntil } });
+      const result = await db.shop.updateMany({ where: { shop, lockOwner: owner }, data: { lockedUntil: leaseUntil } });
+      return result.count === 1;
     },
 
     async releaseShop(shop, owner) {

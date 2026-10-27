@@ -3,6 +3,7 @@ import { computeSalePrice } from "./pricing.ts";
 import type { Logger } from "./logger.ts";
 import {
   ITEM_STATUS,
+  LeaseLostError,
   PermanentError,
   SALE_STATUS,
   type AdminGateway,
@@ -88,7 +89,11 @@ export function createSaleEngine(deps: EngineDeps) {
   const { repo, logger, owner } = deps;
 
   const lease = () => new Date(deps.now().getTime() + leaseMs);
-  const renew = (shop: string) => repo.renewShop(shop, owner, lease());
+  // Fencing: every price write is preceded by a renew, so a worker whose lease expired and was taken
+  // over by another instance stops instead of writing concurrently.
+  const renew = async (shop: string) => {
+    if (!(await repo.renewShop(shop, owner, lease()))) throw new LeaseLostError(shop);
+  };
 
   async function snapshot(sale: SaleRecord, gateway: AdminGateway): Promise<void> {
     const currencyCode = sale.currencyCode ?? (await gateway.getShopCurrency());
@@ -158,6 +163,7 @@ export function createSaleEngine(deps: EngineDeps) {
     let failed = 0;
     for (const [productId, productItems] of groupByProduct(items)) {
       for (const part of chunk(productItems, batchSize)) {
+        await renew(shop);
         const result = await gateway.updateVariantPrices(
           productId,
           part.map((item) => ({ id: item.variantId, ...pick(item) })),
@@ -175,7 +181,6 @@ export function createSaleEngine(deps: EngineDeps) {
         await repo.setItemStatuses(updates);
         succeeded += result.updated.length;
         failed += result.failed.length;
-        await renew(shop);
       }
     }
     return { succeeded, failed };
@@ -249,6 +254,7 @@ export function createSaleEngine(deps: EngineDeps) {
         ITEM_STATUS.FAILED,
       );
 
+      await renew(sale.shop);
       await repo.updateSale(sale.shop, sale.id, {
         status: SALE_STATUS.ACTIVE,
         appliedAt: deps.now(),
@@ -259,6 +265,8 @@ export function createSaleEngine(deps: EngineDeps) {
       await repo.audit({ shop: sale.shop, saleId: sale.id, action: "sale.activated", detail: { failedVariants: failed } });
       logger.info("Sale activated", { shop: sale.shop, saleId: sale.id, failedVariants: failed });
     } catch (error) {
+      // Not a failed attempt: the new lease holder carries on from the saved state.
+      if (error instanceof LeaseLostError) throw error;
       const attempts = sale.attempts + 1;
       const message = errorMessage(error);
       const permanent = error instanceof PermanentError;
@@ -349,6 +357,7 @@ export function createSaleEngine(deps: EngineDeps) {
         throw new Error(`${stillApplied} variant(s) could not be restored yet`);
       }
 
+      await renew(sale.shop);
       await repo.updateSale(sale.shop, sale.id, {
         status: SALE_STATUS.COMPLETED,
         revertedAt: deps.now(),
@@ -358,6 +367,8 @@ export function createSaleEngine(deps: EngineDeps) {
       await repo.audit({ shop: sale.shop, saleId: sale.id, action: "sale.reverted" });
       logger.info("Sale reverted", { shop: sale.shop, saleId: sale.id });
     } catch (error) {
+      // Not a failed attempt: the new lease holder carries on from the saved state.
+      if (error instanceof LeaseLostError) throw error;
       const attempts = sale.attempts + 1;
       const message = errorMessage(error);
       await repo.updateSale(sale.shop, sale.id, {
@@ -404,11 +415,17 @@ export function createSaleEngine(deps: EngineDeps) {
         continue;
       }
       try {
-        for (const saleId of saleIds) {
+        for (const [index, saleId] of saleIds.entries()) {
           try {
             await processSale(shop, saleId);
             result.processed += 1;
           } catch (error) {
+            if (error instanceof LeaseLostError) {
+              // Another worker owns this shop now; leave the rest of its sales to that worker.
+              result.skippedLocked += saleIds.length - index;
+              logger.warn("Lost shop lease; stopping work on this shop", { shop, saleId });
+              break;
+            }
             // Only bookkeeping failures land here (e.g. the database is down).
             result.errors += 1;
             logger.error("Unexpected error while processing sale", { shop, saleId, error: errorMessage(error) });
