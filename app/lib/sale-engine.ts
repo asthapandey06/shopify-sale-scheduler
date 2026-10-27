@@ -228,20 +228,39 @@ export function createSaleEngine(deps: EngineDeps) {
     return updated;
   }
 
+  /** The merchant paused PriceTide while this sale was starting: undo whatever was written. */
+  async function rollBackForPause(sale: SaleRecord): Promise<void> {
+    const rolledBack = await transition(sale, SALE_STATUS.ACTIVATING, {
+      status: SALE_STATUS.REVERTING,
+      endsAt: deps.now(),
+      attempts: 0,
+      nextAttemptAt: null,
+      lastError: "PriceTide was paused while this sale was starting, so its original prices are being restored.",
+    });
+    if (rolledBack) await repo.audit({ shop: sale.shop, saleId: sale.id, action: "sale.paused_while_starting" });
+  }
+
   async function activate(sale: SaleRecord): Promise<void> {
     const now = deps.now();
 
     if (sale.status === SALE_STATUS.SCHEDULED && sale.endsAt.getTime() <= now.getTime()) {
       const missed = await transition(sale, SALE_STATUS.SCHEDULED, {
         status: SALE_STATUS.FAILED,
-        lastError: "The sale window passed before it could start (the app was offline or unreachable).",
+        lastError: "The sale window passed before it could start (PriceTide was paused, offline or unreachable).",
       });
       if (missed) await repo.audit({ shop: sale.shop, saleId: sale.id, action: "sale.missed" });
       return;
     }
 
+    // Paused by the merchant (checked here too in case the pause landed after findDueSales): wait.
+    if (sale.status === SALE_STATUS.SCHEDULED && (await repo.isShopPaused(sale.shop))) return;
+
     // A merchant cancel can land between reading the sale and this write; then it must not start.
     if (sale.status === SALE_STATUS.SCHEDULED && !(await transition(sale, SALE_STATUS.SCHEDULED, { status: SALE_STATUS.ACTIVATING }))) {
+      return;
+    }
+    if (sale.status === SALE_STATUS.ACTIVATING && (await repo.isShopPaused(sale.shop))) {
+      await rollBackForPause(sale);
       return;
     }
 
@@ -264,6 +283,11 @@ export function createSaleEngine(deps: EngineDeps) {
         ITEM_STATUS.FAILED,
       );
 
+      // Paused while prices were being written: don't leave a sale running on a paused shop.
+      if (await repo.isShopPaused(sale.shop)) {
+        await rollBackForPause(sale);
+        return;
+      }
       await renew(sale.shop);
       const activated = await transition(sale, SALE_STATUS.ACTIVATING, {
         status: SALE_STATUS.ACTIVE,

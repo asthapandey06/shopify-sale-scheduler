@@ -96,22 +96,21 @@ export async function ensureShop(shop: string, db: PrismaClient = prisma): Promi
 export function createPrismaSaleRepo(db: PrismaClient = prisma): SaleRepo {
   return {
     async findDueSales(now, limit) {
-      const rows = await db.sale.findMany({
-        where: {
-          AND: [
-            { OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }] },
-            {
-              OR: [
-                { status: SALE_STATUS.SCHEDULED, startsAt: { lte: now } },
-                { status: SALE_STATUS.ACTIVE, endsAt: { lte: now } },
-                { status: { in: [SALE_STATUS.ACTIVATING, SALE_STATUS.REVERTING] } },
-              ],
-            },
-          ],
-        },
-        orderBy: { startsAt: "asc" },
-        take: limit,
-      });
+      // Raw SQL for the NOT EXISTS on paused shops (Sale has no relation to Shop); the rest mirrors the
+      // memory repo. Values are bound parameters.
+      const due = await db.$queryRaw<{ id: string }[]>`
+        SELECT s."id" FROM "Sale" s
+        WHERE (s."nextAttemptAt" IS NULL OR s."nextAttemptAt" <= ${now})
+          AND (
+            (s."status" = ${SALE_STATUS.SCHEDULED} AND s."startsAt" <= ${now}
+              AND NOT EXISTS (SELECT 1 FROM "Shop" sh WHERE sh."shop" = s."shop" AND sh."pausedAt" IS NOT NULL))
+            OR (s."status" = ${SALE_STATUS.ACTIVE} AND s."endsAt" <= ${now})
+            OR s."status" IN (${SALE_STATUS.ACTIVATING}, ${SALE_STATUS.REVERTING})
+          )
+        ORDER BY s."startsAt" ASC
+        LIMIT ${limit}`;
+      if (due.length === 0) return [];
+      const rows = await db.sale.findMany({ where: { id: { in: due.map((d) => d.id) } }, orderBy: { startsAt: "asc" } });
       return rows.map(toSaleRecord);
     },
 
@@ -213,6 +212,11 @@ export function createPrismaSaleRepo(db: PrismaClient = prisma): SaleRepo {
         for (const row of rows) busy.add(row.variantId);
       }
       return busy;
+    },
+
+    async isShopPaused(shop) {
+      const row = await db.shop.findUnique({ where: { shop }, select: { pausedAt: true } });
+      return row?.pausedAt != null;
     },
 
     async isBillingActive(shop) {

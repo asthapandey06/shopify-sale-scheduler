@@ -84,6 +84,7 @@ export interface AuditEntry {
 
 /** Persistence used by the sale engine. Every method is scoped to one shop or sale. */
 export interface SaleRepo {
+  /** Sales with work to do now. Scheduled sales of paused shops are left out. */
   findDueSales(now: Date, limit: number): Promise<SaleRecord[]>;
   claimShop(shop: string, owner: string, leaseUntil: Date, now: Date): Promise<boolean>;
   /** Extends the lease; false if this owner no longer holds it (another worker took over). */
@@ -101,6 +102,8 @@ export interface SaleRepo {
   setItemStatuses(updates: { id: string; status: ItemStatus; message: string | null }[]): Promise<void>;
   findBusyVariants(shop: string, excludeSaleId: string, variantIds: string[]): Promise<Set<string>>;
   isBillingActive(shop: string): Promise<boolean>;
+  /** The merchant paused PriceTide: scheduled sales must not start (restores still run). */
+  isShopPaused(shop: string): Promise<boolean>;
   audit(entry: AuditEntry): Promise<void>;
 }
 

@@ -18,14 +18,17 @@ import {
 export function createMemoryRepo() {
   const sales = new Map<string, SaleRecord>();
   const items = new Map<string, SaleItemRecord>();
-  const shops = new Map<string, { billingActive: boolean; lockOwner: string | null; lockedUntil: Date | null }>();
+  const shops = new Map<
+    string,
+    { billingActive: boolean; paused: boolean; lockOwner: string | null; lockedUntil: Date | null }
+  >();
   const auditLog: AuditEntry[] = [];
   let seq = 0;
 
   const shopRow = (shop: string) => {
     let row = shops.get(shop);
     if (!row) {
-      row = { billingActive: false, lockOwner: null, lockedUntil: null };
+      row = { billingActive: false, paused: false, lockOwner: null, lockedUntil: null };
       shops.set(shop, row);
     }
     return row;
@@ -38,7 +41,7 @@ export function createMemoryRepo() {
         .filter((s) => !s.nextAttemptAt || s.nextAttemptAt.getTime() <= t)
         .filter(
           (s) =>
-            (s.status === SALE_STATUS.SCHEDULED && s.startsAt.getTime() <= t) ||
+            (s.status === SALE_STATUS.SCHEDULED && s.startsAt.getTime() <= t && !shops.get(s.shop)?.paused) ||
             (s.status === SALE_STATUS.ACTIVE && s.endsAt.getTime() <= t) ||
             s.status === SALE_STATUS.ACTIVATING ||
             s.status === SALE_STATUS.REVERTING,
@@ -130,6 +133,9 @@ export function createMemoryRepo() {
     async isBillingActive(shop) {
       return shopRow(shop).billingActive;
     },
+    async isShopPaused(shop) {
+      return shopRow(shop).paused;
+    },
     async audit(entry) {
       auditLog.push(entry);
     },
@@ -142,6 +148,9 @@ export function createMemoryRepo() {
     auditLog,
     setBilling(shop: string, active: boolean) {
       shopRow(shop).billingActive = active;
+    },
+    setPaused(shop: string, paused: boolean) {
+      shopRow(shop).paused = paused;
     },
     shopLock(shop: string) {
       const row = shopRow(shop);

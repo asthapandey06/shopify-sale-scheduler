@@ -398,3 +398,62 @@ test("memory repo lists items in the same order as the Prisma repo", async () =>
   const listed = await mem.repo.listItems("s", ["PENDING"]);
   assert.deepEqual(listed.map((i) => `${i.productId}/${i.variantId}`), ["p1/v2", "p1/v9", "p2/v1"]);
 });
+
+test("a paused shop's scheduled sales don't start, and start once resumed", async () => {
+  const { mem, store, engine, addSale, price } = setup();
+  addSale();
+  mem.setPaused(SHOP, true);
+  await engine.tick();
+  assert.equal(mem.sales.get("sale_1")!.status, "SCHEDULED");
+  assert.equal(store.calls.updates, 0);
+  assert.equal(mem.sales.get("sale_1")!.attempts, 0, "pausing isn't a failed attempt");
+
+  mem.setPaused(SHOP, false);
+  await engine.tick();
+  assert.equal(mem.sales.get("sale_1")!.status, "ACTIVE");
+  assert.equal(price("11").price, "80.00");
+});
+
+test("prices are still restored while a shop is paused", async () => {
+  const { mem, time, engine, addSale, price } = setup();
+  addSale();
+  await engine.tick();
+  mem.setPaused(SHOP, true);
+  mem.setBilling(SHOP, false); // pausing also cancels the plan
+  time.set("2026-11-01T12:00:00Z");
+  await engine.tick();
+  assert.equal(mem.sales.get("sale_1")!.status, "COMPLETED");
+  assert.equal(price("11").price, "100.00");
+});
+
+test("a sale already starting when the shop is paused is rolled back, not left running", async () => {
+  const { mem, store, time, engine, addSale, price } = setup();
+  addSale();
+  const realList = store.gateway.listTargetVariants;
+  store.gateway.listTargetVariants = async (...args) => {
+    mem.setPaused(SHOP, true); // the merchant pauses while the sale is being snapshotted
+    return realList(...args);
+  };
+  await engine.tick();
+  store.gateway.listTargetVariants = realList;
+  assert.equal(mem.sales.get("sale_1")!.status, "REVERTING");
+  assert.match(mem.sales.get("sale_1")!.lastError ?? "", /paused/);
+  await engine.tick();
+  assert.equal(mem.sales.get("sale_1")!.status, "COMPLETED");
+  assert.equal(price("11").price, "100.00");
+  assert.equal(price("12").price, "50.00");
+  void time;
+});
+
+test("an ACTIVATING sale of a paused shop is rolled back on the next pass", async () => {
+  const { mem, store, time, engine, addSale, price } = setup();
+  addSale();
+  store.failUpdates(1);
+  await engine.tick(); // ACTIVATING, waiting to retry
+  mem.setPaused(SHOP, true);
+  time.advance(61_000);
+  await engine.tick();
+  await engine.tick();
+  assert.equal(mem.sales.get("sale_1")!.status, "COMPLETED");
+  assert.equal(price("11").price, "100.00");
+});
