@@ -42,10 +42,29 @@ function intInRange(raw: string | undefined, fallback: number, min: number, max:
   return value;
 }
 
-function bool(raw: string | undefined, fallback: boolean): boolean {
-  if (raw === undefined || raw === "") return fallback;
-  return ["1", "true", "yes", "on"].includes(raw.toLowerCase());
+const TRUE_VALUES = ["1", "true", "yes", "on"];
+const FALSE_VALUES = ["0", "false", "no", "off"];
+
+/** Parses a yes/no setting; a typo is an error rather than silently "false". */
+function bool(raw: string | undefined, fallback: boolean, name: string, errors: string[]): boolean {
+  if (raw === undefined || raw.trim() === "") return fallback;
+  const value = raw.trim().toLowerCase();
+  if (TRUE_VALUES.includes(value)) return true;
+  if (FALSE_VALUES.includes(value)) return false;
+  errors.push(`${name} must be true or false`);
+  return fallback;
 }
+
+function isPostgresUrl(value: string): boolean {
+  try {
+    return ["postgres:", "postgresql:"].includes(new URL(value).protocol);
+  } catch {
+    return false;
+  }
+}
+
+// Hosts that only make sense during `shopify app dev`; a production app URL must be stable.
+const DEV_HOST_RE = /(^|\.)(localhost|127\.0\.0\.1|trycloudflare\.com|ngrok(-free)?\.(app|io|dev))$/i;
 
 export function loadConfig(env: Record<string, string | undefined>): AppConfig {
   const errors: string[] = [];
@@ -60,12 +79,19 @@ export function loadConfig(env: Record<string, string | undefined>): AppConfig {
   const apiKey = required("SHOPIFY_API_KEY");
   const apiSecret = required("SHOPIFY_API_SECRET");
   const appUrl = required("SHOPIFY_APP_URL");
-  required("DATABASE_URL");
+  const databaseUrl = required("DATABASE_URL");
+  if (databaseUrl && !isPostgresUrl(databaseUrl)) errors.push("DATABASE_URL must be a postgres:// or postgresql:// URL");
+  // Optional direct (non-pooled) connection for migrations, e.g. Neon's direct URL; see README.
+  const directUrl = env.DIRECT_URL?.trim();
+  if (directUrl && !isPostgresUrl(directUrl)) errors.push("DIRECT_URL must be a postgres:// or postgresql:// URL");
 
   if (appUrl) {
     try {
       const url = new URL(appUrl);
       if (isProduction && url.protocol !== "https:") errors.push("SHOPIFY_APP_URL must use https in production");
+      if (isProduction && DEV_HOST_RE.test(url.hostname)) {
+        errors.push("SHOPIFY_APP_URL points to a temporary development host; use your production domain");
+      }
     } catch {
       errors.push("SHOPIFY_APP_URL must be a valid URL");
     }
@@ -98,7 +124,11 @@ export function loadConfig(env: Record<string, string | undefined>): AppConfig {
   if (!Number.isFinite(amount) || amount <= 0 || amount > 10_000) errors.push("PLAN_PRICE must be a positive number");
 
   // Off unless asked for: development stores get test charges via their detected dev-store flag.
-  const testMode = bool(env.BILLING_TEST_MODE, false);
+  const testMode = bool(env.BILLING_TEST_MODE, false, "BILLING_TEST_MODE", errors);
+  const schedulerEnabled = bool(env.SCHEDULER_ENABLED, true, "SCHEDULER_ENABLED", errors);
+  if (isProduction && !schedulerEnabled && !cronSecret) {
+    errors.push("SCHEDULER_ENABLED=false needs CRON_SECRET, so a cron service can run sales via POST /jobs/tick");
+  }
 
   const config: AppConfig = {
     isProduction,
@@ -110,7 +140,7 @@ export function loadConfig(env: Record<string, string | undefined>): AppConfig {
     cronSecret,
     supportEmail,
     ownerName: env.APP_OWNER_NAME?.trim() || "the app developer",
-    schedulerEnabled: bool(env.SCHEDULER_ENABLED, true),
+    schedulerEnabled,
     schedulerIntervalMs: intInRange(env.SCHEDULER_INTERVAL_SECONDS, 30, 10, 3600, "SCHEDULER_INTERVAL_SECONDS", errors) * 1000,
     billing: {
       planName: "Pro",

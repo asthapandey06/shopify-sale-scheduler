@@ -245,3 +245,28 @@ test("public pages can't be framed; embedded pages keep Shopify's per-shop polic
   assert.equal(appWithoutShop.get("Content-Security-Policy"), null, "never block the admin iframe");
   assert.equal(appWithoutShop.get("X-Frame-Options"), null);
 });
+
+test("config catches production mistakes that would otherwise fail silently", () => {
+  const prod = {
+    NODE_ENV: "production",
+    SHOPIFY_API_KEY: "k",
+    SHOPIFY_API_SECRET: "s",
+    SHOPIFY_APP_URL: "https://app.example.com",
+    DATABASE_URL: "postgresql://u:p@db.example.com/pricetide",
+    TOKEN_ENCRYPTION_KEYS: `k1:${key()}`,
+    SUPPORT_EMAIL: "support@example.com",
+  };
+  assert.doesNotThrow(() => loadConfig(prod));
+  const fails = (overrides: Record<string, string>, pattern: RegExp) =>
+    assert.throws(() => loadConfig({ ...prod, ...overrides }), pattern);
+  fails({ SCHEDULER_ENABLED: "false" }, /CRON_SECRET/); // nothing would ever run sales
+  fails({ SHOPIFY_APP_URL: "https://pink-cats.trycloudflare.com" }, /temporary development/);
+  fails({ SHOPIFY_APP_URL: "https://localhost:3000" }, /temporary development/);
+  fails({ DATABASE_URL: "mysql://x" }, /DATABASE_URL must be a postgres/);
+  fails({ DIRECT_URL: "not a url" }, /DIRECT_URL must be a postgres/);
+  fails({ SCHEDULER_ENABLED: "flase" }, /SCHEDULER_ENABLED must be true or false/);
+  assert.doesNotThrow(() => loadConfig({ ...prod, SCHEDULER_ENABLED: "false", CRON_SECRET: "x".repeat(32) }));
+  assert.doesNotThrow(() => loadConfig({ ...prod, DIRECT_URL: "postgres://u:p@direct.example.com/pricetide" }));
+  // Tunnels are fine in development.
+  assert.doesNotThrow(() => loadConfig({ ...prod, NODE_ENV: "development", SHOPIFY_APP_URL: "https://pink-cats.trycloudflare.com" }));
+});
