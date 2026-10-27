@@ -1,7 +1,8 @@
 # App Store submission kit
 
 Audit of this codebase against the Shopify App Store requirements
-(https://shopify.dev/docs/apps/launch/shopify-app-store/app-store-requirements), checked October 21, 2026.
+(https://shopify.dev/docs/apps/launch/shopify-app-store/app-store-requirements), checked October 21, 2026;
+re-audited October 27, 2026 (API fields, billing, webhooks and Polaris props re-checked against shopify.dev).
 
 Legend: ✅ met in code · 🔧 fixed during this audit · 🟡 you must do it (listing / dashboard / live test) · ⛔ blocker
 
@@ -23,7 +24,7 @@ Legend: ✅ met in code · 🔧 fixed during this audit · 🟡 you must do it (
 
 | Req | Requirement | Status | Evidence |
 | --- | --- | --- | --- |
-| 2.1.1–2.1.2 | No critical or minor errors | 🟡 | Run the live test plan in section 4 on a dev store. Code paths covered by 45 automated tests |
+| 2.1.1–2.1.2 | No critical or minor errors | 🟡 | Run the live test plan in section 4 on a dev store. Code paths covered by 72 unit tests and 16 PostgreSQL integration tests (`npm test`, `npm run test:db`) |
 | 2.1.3 | Usable UI, no raw 404/500 pages | 🔧 | Friendly error pages added (`components/error-page.tsx`, error boundaries in `root.tsx` and `routes/app.tsx`) |
 | 2.1.4 | Data synchronized accurately | ✅ | Snapshot-before-change, exact decimal math, conflict-safe revert, never-give-up restore (`lib/sale-engine.ts`) |
 | 2.2.1 | Uses Shopify APIs | ✅ | Admin GraphQL |
@@ -31,7 +32,7 @@ Legend: ✅ met in code · 🔧 fixed during this audit · 🟡 you must do it (
 | 2.2.3 | Latest App Bridge | ✅ | Loaded from Shopify CDN by `AppProvider` (official template) |
 | 2.2.4 | GraphQL Admin API only | ✅ | No REST calls; API version 2026-10 |
 | 2.2.5–2.2.9 | Admin / Sidekick extensions | ✅ n/a | No extensions |
-| 2.3.1 | Install only from Shopify surfaces, never ask for a shop domain | 🔧 | Removed the template's "enter your shop domain" form from the public landing page |
+| 2.3.1 | Install only from Shopify surfaces, never ask for a shop domain | 🔧 | No shop-domain form anywhere: removed from the landing page and from `/auth/login` (now tells visitors to open the app from Shopify); `test/app-store.test.ts` fails if one comes back |
 | 2.3.2 / 2.3.4 | OAuth immediately on install and reinstall | ✅ | Shopify-managed installation (scopes in `shopify.app.toml`) + `authenticate.admin` |
 | 2.3.3 | Land in app UI after install | ✅ | Managed install redirects to the embedded app |
 
@@ -42,14 +43,14 @@ Legend: ✅ met in code · 🔧 fixed during this audit · 🟡 you must do it (
 | 3.1.1 | Valid TLS | 🟡 | Boot refuses a non-https `SHOPIFY_APP_URL` in production; your host must serve a valid certificate |
 | 3.2.x | Only necessary scopes | ✅ | Only `write_products`; boot fails if extra scopes are configured |
 | Mandatory compliance webhooks | `customers/data_request`, `customers/redact`, `shop/redact`, 401 on bad HMAC | ✅ | Declared in `shopify.app.toml`; handlers in `app/routes/webhooks.*`; HMAC verified by the library (invalid → 401) |
-| Clickjacking protection | Frame only inside the shop's admin | ✅ | Per-shop `frame-ancestors` CSP via `addDocumentResponseHeaders` |
+| Clickjacking protection | Frame only inside the shop's admin | ✅ | Per-shop `frame-ancestors` CSP via `addDocumentResponseHeaders`; public pages (`/`, `/privacy`, `/auth/login`) send `frame-ancestors 'none'` |
 
 ### Listing (you complete these in the Partner Dashboard)
 
 | Req | Requirement | Status | What to do |
 | --- | --- | --- | --- |
 | 4.1.1 | Same name in dashboard and listing | 🟡 | Use one name everywhere, including `name` in `shopify.app.toml` |
-| 4.1.2 | Unique name | ⛔ | **"PriceTide" is already used by several apps** (e.g. "PriceTide: Auto Discounts", "SaleSync — PriceTide", "Launch Flow: PriceTide"). Pick a distinct brand name before submitting (see section 2) |
+| 4.1.2 | Unique name | 🟡 | Search apps.shopify.com for "PriceTide" yourself before submitting. An earlier note said other apps use it; a re-check on Oct 27, 2026 found no listing with that name but the store search didn't load, so it is unconfirmed either way |
 | 4.2.1–4.2.3 | Accurate pricing, only in the Pricing section, not in images | 🟡 | Use the pricing text in section 2; keep prices out of screenshots and description |
 | 4.3.1 | Online Store requirement | 🟡 | Do **not** mark Online Store as required (the app works on any sales channel's base prices) |
 | 4.3.2 | Languages | 🟡 | English only |
@@ -134,7 +135,7 @@ Run on a development store with production-like settings (deployed app, real Pos
 
 ## 5. Before you click submit
 
-- [ ] Unique app name chosen and used everywhere (⛔ 4.1.2)
+- [ ] App name confirmed unique on apps.shopify.com and used everywhere (4.1.2)
 - [ ] App deployed on https with `NODE_ENV=production`, `SUPPORT_EMAIL`, `APP_OWNER_NAME` set
 - [ ] `npm run deploy` run so webhooks, scopes and app URL are pushed
 - [ ] $19 App Store registration paid; emergency contact set
