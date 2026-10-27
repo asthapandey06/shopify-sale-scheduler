@@ -2,8 +2,8 @@
  * Structured JSON logger with secret redaction.
  *
  * Never log raw request bodies, sessions or tokens. Anything passed in the
- * context object is scrubbed: keys that look like secrets are replaced and
- * long strings are truncated.
+ * context object is scrubbed: keys that look like secrets are replaced, token
+ * and credential patterns inside strings are masked, and long strings are truncated.
  */
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
@@ -18,12 +18,23 @@ export interface Logger {
 const SECRET_KEY_RE = /token|secret|password|passwd|authorization|cookie|api[-_]?key|session|credential|signature|hmac/i;
 const LEVEL_ORDER: Record<LogLevel, number> = { debug: 10, info: 20, warn: 30, error: 40 };
 const MAX_STRING = 500;
+// Secrets that can hide inside messages: Shopify tokens, bearer tokens, passwords in connection URLs.
+const SECRET_VALUE_RES: [RegExp, string][] = [
+  [/\bshp[a-z]{2}_[A-Za-z0-9]+/g, "[redacted]"],
+  [/\bBearer\s+[A-Za-z0-9._~+/=-]+/gi, "Bearer [redacted]"],
+  [/:\/\/[^\s/@:]+:[^\s/@]+@/g, "://[redacted]@"],
+];
+
+function maskSecrets(value: string): string {
+  return SECRET_VALUE_RES.reduce((out, [re, replacement]) => out.replace(re, replacement), value);
+}
 const MAX_DEPTH = 4;
 
 export function redact(value: unknown, depth = 0): unknown {
   if (value == null) return value;
   if (typeof value === "string") {
-    return value.length > MAX_STRING ? `${value.slice(0, MAX_STRING)}…[truncated]` : value;
+    const masked = maskSecrets(value);
+    return masked.length > MAX_STRING ? `${masked.slice(0, MAX_STRING)}…[truncated]` : masked;
   }
   if (typeof value === "number" || typeof value === "boolean") return value;
   if (typeof value === "bigint") return value.toString();

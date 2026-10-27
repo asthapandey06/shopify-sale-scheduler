@@ -2,7 +2,7 @@ import { PassThrough } from "stream";
 import { renderToPipeableStream } from "react-dom/server";
 import { ServerRouter } from "react-router";
 import { createReadableStreamFromReadable } from "@react-router/node";
-import { type EntryContext, type HandleDataRequestFunction } from "react-router";
+import { type EntryContext, type HandleDataRequestFunction, type HandleErrorFunction } from "react-router";
 import { isbot } from "isbot";
 import { addDocumentResponseHeaders } from "./shopify.server";
 import { config } from "./config.server";
@@ -24,7 +24,7 @@ export default async function handleRequest(
 ) {
   // Sets the Content-Security-Policy frame-ancestors for the shop's admin.
   addDocumentResponseHeaders(request, responseHeaders);
-  applySecurityHeaders(responseHeaders, config.isProduction);
+  applySecurityHeaders(responseHeaders, config.isProduction, new URL(request.url).pathname);
   const userAgent = request.headers.get("user-agent");
   const callbackName = isbot(userAgent ?? "") ? "onAllReady" : "onShellReady";
 
@@ -58,6 +58,12 @@ export default async function handleRequest(
     setTimeout(abort, streamTimeout + 1000);
   });
 }
+
+// Unexpected loader/action/render errors go through the redacting logger (path only, no query string).
+export const handleError: HandleErrorFunction = (error, { request }) => {
+  if (request.signal.aborted) return;
+  logger.error("Unhandled server error", { path: new URL(request.url).pathname, error: error as Error });
+};
 
 export const handleDataRequest: HandleDataRequestFunction = (response) => {
   applySecurityHeaders(response.headers, config.isProduction);
