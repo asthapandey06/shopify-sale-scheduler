@@ -134,8 +134,12 @@ export function createPrismaSaleRepo(db: PrismaClient = prisma): SaleRepo {
       return row ? toSaleRecord(row) : null;
     },
 
-    async updateSale(shop, saleId, patch) {
-      await db.sale.updateMany({ where: { id: saleId, shop }, data: patch });
+    async updateSale(shop, saleId, patch, expectedStatus) {
+      const result = await db.sale.updateMany({
+        where: { id: saleId, shop, ...(expectedStatus ? { status: expectedStatus } : {}) },
+        data: patch,
+      });
+      return result.count === 1;
     },
 
     async countItems(saleId) {

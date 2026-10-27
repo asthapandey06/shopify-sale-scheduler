@@ -90,7 +90,11 @@ export interface SaleRepo {
   renewShop(shop: string, owner: string, leaseUntil: Date): Promise<boolean>;
   releaseShop(shop: string, owner: string): Promise<void>;
   getSale(shop: string, saleId: string): Promise<SaleRecord | null>;
-  updateSale(shop: string, saleId: string, patch: SalePatch): Promise<void>;
+  /**
+   * Applies the patch. With `expectedStatus`, only if the sale is still in that status (compare-and-set),
+   * so a concurrent cancel or uninstall wins. Returns whether the sale was updated.
+   */
+  updateSale(shop: string, saleId: string, patch: SalePatch, expectedStatus?: SaleStatus): Promise<boolean>;
   countItems(saleId: string): Promise<number>;
   insertItems(items: NewSaleItem[]): Promise<void>;
   listItems(saleId: string, statuses: ItemStatus[]): Promise<SaleItemRecord[]>;

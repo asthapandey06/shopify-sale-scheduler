@@ -10,8 +10,10 @@ import {
   type ItemStatus,
   type NewSaleItem,
   type SaleItemRecord,
+  type SalePatch,
   type SaleRecord,
   type SaleRepo,
+  type SaleStatus,
 } from "./sale-types.ts";
 
 /**
@@ -217,20 +219,30 @@ export function createSaleEngine(deps: EngineDeps) {
     return toWrite;
   }
 
+  /** Compare-and-set status change; false (and a log line) if someone else changed the sale first. */
+  async function transition(sale: SaleRecord, expected: SaleStatus, patch: SalePatch): Promise<boolean> {
+    const updated = await repo.updateSale(sale.shop, sale.id, patch, expected);
+    if (!updated) {
+      logger.warn("Sale status changed concurrently; leaving it as is", { shop: sale.shop, saleId: sale.id, expected });
+    }
+    return updated;
+  }
+
   async function activate(sale: SaleRecord): Promise<void> {
     const now = deps.now();
 
     if (sale.status === SALE_STATUS.SCHEDULED && sale.endsAt.getTime() <= now.getTime()) {
-      await repo.updateSale(sale.shop, sale.id, {
+      const missed = await transition(sale, SALE_STATUS.SCHEDULED, {
         status: SALE_STATUS.FAILED,
         lastError: "The sale window passed before it could start (the app was offline or unreachable).",
       });
-      await repo.audit({ shop: sale.shop, saleId: sale.id, action: "sale.missed" });
+      if (missed) await repo.audit({ shop: sale.shop, saleId: sale.id, action: "sale.missed" });
       return;
     }
 
-    if (sale.status === SALE_STATUS.SCHEDULED) {
-      await repo.updateSale(sale.shop, sale.id, { status: SALE_STATUS.ACTIVATING });
+    // A merchant cancel can land between reading the sale and this write; then it must not start.
+    if (sale.status === SALE_STATUS.SCHEDULED && !(await transition(sale, SALE_STATUS.SCHEDULED, { status: SALE_STATUS.ACTIVATING }))) {
+      return;
     }
 
     try {
@@ -255,13 +267,15 @@ export function createSaleEngine(deps: EngineDeps) {
       );
 
       await renew(sale.shop);
-      await repo.updateSale(sale.shop, sale.id, {
+      const activated = await transition(sale, SALE_STATUS.ACTIVATING, {
         status: SALE_STATUS.ACTIVE,
         appliedAt: deps.now(),
         attempts: 0,
         nextAttemptAt: null,
         lastError: failed > 0 ? `${failed} variant(s) could not be updated. See the item list for details.` : null,
       });
+      // e.g. the app was uninstalled meanwhile: keep that status; written prices stay recorded as APPLIED.
+      if (!activated) return;
       await repo.audit({ shop: sale.shop, saleId: sale.id, action: "sale.activated", detail: { failedVariants: failed } });
       logger.info("Sale activated", { shop: sale.shop, saleId: sale.id, failedVariants: failed });
     } catch (error) {
@@ -275,7 +289,7 @@ export function createSaleEngine(deps: EngineDeps) {
         const applied = await repo.listItems(sale.id, [ITEM_STATUS.APPLIED]);
         if (applied.length > 0) {
           // Some prices already changed: roll them back right away.
-          await repo.updateSale(sale.shop, sale.id, {
+          await transition(sale, SALE_STATUS.ACTIVATING, {
             status: SALE_STATUS.REVERTING,
             endsAt: deps.now(),
             attempts: 0,
@@ -283,12 +297,12 @@ export function createSaleEngine(deps: EngineDeps) {
             lastError: `Could not finish starting the sale, rolling back: ${message}`,
           });
         } else {
-          await repo.updateSale(sale.shop, sale.id, { status: SALE_STATUS.FAILED, attempts, nextAttemptAt: null, lastError: message });
+          await transition(sale, SALE_STATUS.ACTIVATING, { status: SALE_STATUS.FAILED, attempts, nextAttemptAt: null, lastError: message });
         }
         await repo.audit({ shop: sale.shop, saleId: sale.id, action: "sale.activation_failed", detail: { message, attempts } });
         logger.error("Sale activation failed", { shop: sale.shop, saleId: sale.id, error: message, attempts });
       } else {
-        await repo.updateSale(sale.shop, sale.id, {
+        await transition(sale, SALE_STATUS.ACTIVATING, {
           status: SALE_STATUS.ACTIVATING,
           attempts,
           nextAttemptAt: new Date(deps.now().getTime() + backoffMs(attempts, 15 * 60_000)),
@@ -300,8 +314,8 @@ export function createSaleEngine(deps: EngineDeps) {
   }
 
   async function revert(sale: SaleRecord): Promise<void> {
-    if (sale.status === SALE_STATUS.ACTIVE) {
-      await repo.updateSale(sale.shop, sale.id, { status: SALE_STATUS.REVERTING });
+    if (sale.status === SALE_STATUS.ACTIVE && !(await transition(sale, SALE_STATUS.ACTIVE, { status: SALE_STATUS.REVERTING }))) {
+      return;
     }
 
     try {
@@ -358,12 +372,13 @@ export function createSaleEngine(deps: EngineDeps) {
       }
 
       await renew(sale.shop);
-      await repo.updateSale(sale.shop, sale.id, {
+      const completed = await transition(sale, SALE_STATUS.REVERTING, {
         status: SALE_STATUS.COMPLETED,
         revertedAt: deps.now(),
         attempts: 0,
         nextAttemptAt: null,
       });
+      if (!completed) return;
       await repo.audit({ shop: sale.shop, saleId: sale.id, action: "sale.reverted" });
       logger.info("Sale reverted", { shop: sale.shop, saleId: sale.id });
     } catch (error) {
@@ -371,7 +386,7 @@ export function createSaleEngine(deps: EngineDeps) {
       if (error instanceof LeaseLostError) throw error;
       const attempts = sale.attempts + 1;
       const message = errorMessage(error);
-      await repo.updateSale(sale.shop, sale.id, {
+      await transition(sale, SALE_STATUS.REVERTING, {
         status: SALE_STATUS.REVERTING,
         attempts,
         nextAttemptAt: new Date(deps.now().getTime() + backoffMs(attempts, 30 * 60_000)),

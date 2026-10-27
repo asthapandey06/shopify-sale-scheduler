@@ -349,3 +349,34 @@ test("a worker that lost its shop lease stops before writing prices", async () =
   assert.equal(sale.attempts, 0, "losing the lease is not a failed attempt");
   assert.equal(mem.shopLock(SHOP).owner, "worker-b", "the new owner's lease is untouched");
 });
+
+test("a sale cancelled right after the worker read it is not started", async () => {
+  const { mem, store, engine, addSale, price } = setup();
+  addSale();
+  const realGetSale = mem.repo.getSale;
+  mem.repo.getSale = async (shop, saleId) => {
+    const read = await realGetSale(shop, saleId);
+    // The merchant's cancel lands between the worker's read and its first write.
+    mem.sales.get(saleId)!.status = "CANCELLED";
+    return read;
+  };
+  await engine.tick();
+  assert.equal(mem.sales.get("sale_1")!.status, "CANCELLED");
+  assert.equal(store.calls.updates, 0);
+  assert.equal(mem.items.size, 0);
+  assert.equal(price("11").price, "100.00");
+});
+
+test("an uninstall during activation is not overwritten by the worker", async () => {
+  const { mem, store, engine, addSale } = setup();
+  addSale();
+  const realUpdate = store.gateway.updateVariantPrices;
+  store.gateway.updateVariantPrices = async (productId, updates) => {
+    mem.sales.get("sale_1")!.status = "FAILED"; // handleUninstall ran meanwhile
+    return realUpdate(productId, updates);
+  };
+  await engine.tick();
+  assert.equal(mem.sales.get("sale_1")!.status, "FAILED", "not overwritten with ACTIVE");
+  // The written prices stay recorded, so a reinstall can offer to restore them.
+  assert.ok([...mem.items.values()].some((i) => i.status === "APPLIED"));
+});

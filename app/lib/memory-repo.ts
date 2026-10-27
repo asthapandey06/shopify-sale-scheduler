@@ -72,9 +72,14 @@ export function createMemoryRepo() {
       const sale = sales.get(saleId);
       return sale && sale.shop === shop ? { ...sale } : null;
     },
-    async updateSale(shop, saleId, patch: SalePatch) {
+    async updateSale(shop, saleId, patch: SalePatch, expectedStatus) {
       const sale = sales.get(saleId);
-      if (sale && sale.shop === shop) Object.assign(sale, patch);
+      if (!sale || sale.shop !== shop || (expectedStatus && sale.status !== expectedStatus)) return false;
+      // Like Prisma, undefined fields are left unchanged.
+      for (const [key, value] of Object.entries(patch)) {
+        if (value !== undefined) Object.assign(sale, { [key]: value });
+      }
+      return true;
     },
     async countItems(saleId) {
       return [...items.values()].filter((i) => i.saleId === saleId).length;
