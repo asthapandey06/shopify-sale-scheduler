@@ -380,3 +380,22 @@ test("an uninstall during activation is not overwritten by the worker", async ()
   // The written prices stay recorded, so a reinstall can offer to restore them.
   assert.ok([...mem.items.values()].some((i) => i.status === "APPLIED"));
 });
+
+test("memory repo lists items in the same order as the Prisma repo", async () => {
+  const { mem } = setup();
+  const item = (productId: string, variantId: string) => ({
+    saleId: "s",
+    shop: SHOP,
+    productId,
+    variantId,
+    originalPrice: "1.00",
+    originalCompareAtPrice: null,
+    salePrice: "0.50",
+    saleCompareAtPrice: "1.00",
+    status: "PENDING" as const,
+    message: null,
+  });
+  await mem.repo.insertItems([item("p2", "v1"), item("p1", "v9"), item("p1", "v2")]);
+  const listed = await mem.repo.listItems("s", ["PENDING"]);
+  assert.deepEqual(listed.map((i) => `${i.productId}/${i.variantId}`), ["p1/v2", "p1/v9", "p2/v1"]);
+});

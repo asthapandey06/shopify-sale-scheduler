@@ -93,7 +93,16 @@ export function createMemoryRepo() {
       }
     },
     async listItems(saleId, statuses: ItemStatus[]) {
-      return [...items.values()].filter((i) => i.saleId === saleId && statuses.includes(i.status)).map((i) => ({ ...i }));
+      // Same order as the Prisma repo (productId, then variantId), so batching matches production.
+      const byKey = (i: SaleItemRecord) => [i.productId, i.variantId];
+      return [...items.values()]
+        .filter((i) => i.saleId === saleId && statuses.includes(i.status))
+        .sort((a, b) => {
+          const [ap, av] = byKey(a);
+          const [bp, bv] = byKey(b);
+          return ap < bp ? -1 : ap > bp ? 1 : av < bv ? -1 : av > bv ? 1 : 0;
+        })
+        .map((i) => ({ ...i }));
     },
     async setItemStatuses(updates) {
       for (const update of updates) {
