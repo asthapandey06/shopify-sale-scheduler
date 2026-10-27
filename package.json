@@ -71,6 +71,7 @@
     "@shopify/plugin-cloudflare"
   ],
   "overrides": {
+    "deepmerge-ts": "^8.0.2",
     "p-map": "^4.0.0",
     "qs": "^6.16.0"
   },
