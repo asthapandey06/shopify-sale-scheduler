@@ -3,7 +3,8 @@
 
 services:
   db:
-    image: postgres:16-alpine
+    # Official image via AWS public ECR: Cloud Shell's Docker Hub mirror often hangs.
+    image: public.ecr.aws/docker/library/postgres:16-alpine
     # POSTGRES_USER, POSTGRES_PASSWORD and POSTGRES_DB come from .env (only read when the data folder is
     # first created; changing them later doesn't change an existing database).
     env_file:
