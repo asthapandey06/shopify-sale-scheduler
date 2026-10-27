@@ -1,0 +1,16 @@
+# Graphify: index only app/, prisma/ and test/ (code only, no docs or secrets)
+node_modules/
+build/
+.react-router/
+.env
+.env.*
+*.md
+/extensions/
+/public/
+/.github/
+/graphify-out/
+/*.ts
+/*.cjs
+/*.toml
+/*.json
+/Dockerfile
