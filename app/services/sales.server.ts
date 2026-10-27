@@ -202,6 +202,24 @@ export async function handleUninstall(shop: string): Promise<void> {
   ]);
 }
 
+/**
+ * app_subscriptions/update: keeps the stored plan status current when a subscription is approved,
+ * cancelled, frozen (unpaid) or expires, so the background worker never starts a sale for a shop that
+ * isn't paying. Only our plan counts. Returns the subscription status it read (for logging).
+ */
+export async function applySubscriptionUpdate(shop: string, payload: unknown, planName: string): Promise<string> {
+  const sub = (payload as { app_subscription?: { name?: unknown; status?: unknown } } | null)?.app_subscription;
+  const status = typeof sub?.status === "string" ? sub.status.toUpperCase() : "";
+  const name = typeof sub?.name === "string" ? sub.name : null;
+  if (name === planName && status) {
+    await prisma.shop.updateMany({
+      where: { shop },
+      data: { billingActive: status === "ACTIVE", planName: status === "ACTIVE" ? name : null },
+    });
+  }
+  return status;
+}
+
 export async function setBillingStatus(shop: string, active: boolean, planName: string | null): Promise<void> {
   await prisma.shop.upsert({
     where: { shop },

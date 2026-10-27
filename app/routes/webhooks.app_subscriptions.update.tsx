@@ -1,27 +1,16 @@
 import type { ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
-import db from "../db.server";
 import { logger } from "../lib/logger";
 import { PLAN } from "../config.server";
+import { applySubscriptionUpdate } from "../services/sales.server";
 
 /**
- * Keeps the stored plan status current when a subscription is approved,
- * cancelled, frozen (unpaid) or expires, so the background worker never starts
- * a sale for a shop that isn't paying. The payload is only a hint; the
- * subscription status is the source of truth.
+ * HMAC-verified by authenticate.webhook. Keeps the stored plan status current; the payload is only a
+ * hint and the subscription status is the source of truth. Idempotent (a plain status overwrite).
  */
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { shop, topic, webhookId, payload } = await authenticate.webhook(request);
-  const sub = (payload as { app_subscription?: { name?: unknown; status?: unknown } }).app_subscription;
-  const status = typeof sub?.status === "string" ? sub.status.toUpperCase() : "";
-  const name = typeof sub?.name === "string" ? sub.name : null;
+  const status = await applySubscriptionUpdate(shop, payload, PLAN);
   logger.info("Webhook received", { topic, shop, webhookId, status });
-
-  if (name === PLAN && status) {
-    await db.shop.updateMany({
-      where: { shop },
-      data: { billingActive: status === "ACTIVE", planName: status === "ACTIVE" ? name : null },
-    });
-  }
   return new Response();
 };
