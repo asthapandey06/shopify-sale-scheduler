@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { hostname } from "node:os";
 import { config } from "../config.server";
+import prisma from "../db.server";
 import { logger } from "../lib/logger";
 import { createSaleEngine } from "../lib/sale-engine";
 import { createTickRunner, type TickRunner } from "../lib/tick-runner";
@@ -91,6 +92,8 @@ export function startScheduler(): void {
     // Let an in-flight pass finish so shop leases are released cleanly.
     const finished = await state.runner.stop(20_000);
     if (!finished) logger.warn("Scheduler pass still running at shutdown; its leases expire on their own");
+    await prisma.$disconnect().catch(() => undefined);
+    logger.info("Scheduler stopped", { signal });
     process.exit(0);
   };
   process.once("SIGTERM", () => void shutdown("SIGTERM"));
