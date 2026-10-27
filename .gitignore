@@ -33,3 +33,8 @@ graphify-out/
 
 # Playwright MCP output (screenshots, snapshots, console logs)
 .playwright-mcp/
+
+# Rendered launch-video output (re-create with marketing/launch-video/render.mjs)
+marketing/launch-video/frames/
+marketing/launch-video/*.mp4
+marketing/launch-video/preview-*.jpg

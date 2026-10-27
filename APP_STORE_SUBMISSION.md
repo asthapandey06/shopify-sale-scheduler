@@ -115,6 +115,24 @@ Tempo Sales. Search apps.shopify.com for each before choosing.
 5. Product prices are back to the originals; variant table shows "Restored".
 6. Show a scheduled sale and cancelling it; show the Plan page.
 
+**30-second demo cut (real app, for the listing video slot or social).** Record the actual app in your dev
+store; don't speed up the 30-second scheduler wait, cut it instead.
+
+Prepare first: a dev store with 3 products (one with a compare-at price), PriceTide installed with the test
+plan approved, browser at 100% zoom in a 1920×1080 window, bookmarks bar and other tabs hidden, a clean demo
+store name. Record with OBS, Loom or Chrome's screen recorder at 30 fps, no cursor highlight effects, and add
+captions plus licensed music afterwards.
+
+| Time | Show (screen) | Caption on screen |
+|---|---|---|
+| 0–3 s | Sales list in the Shopify admin, click **Create sale** | Schedule a sale in seconds |
+| 3–10 s | Type "Weekend Sale", 20% off, **Select products** → pick 3, tick **Start immediately**, set an end time, **Schedule sale** | Pick products, discount and time |
+| 10–12 s | Sale page shows **Starting… → Running** (cut the wait) | Prices change on their own |
+| 12–17 s | Open a product in the admin: price drops, compare-at shows the old price | Sale price + "was" price |
+| 17–20 s | Back in the app: variant table **On sale**; click **End sale now** → confirm | End early anytime |
+| 20–25 s | Product page: original price and compare-at restored (the one without a compare-at has none again) | Originals restored exactly |
+| 25–30 s | Sales list with the ended sale, then the PriceTide logo end card from `marketing/launch-video` | PriceTide: scheduled sales for Shopify |
+
 ## 4. Live test plan (do this before submitting — catches 2.1.1/2.1.2 failures)
 
 Run on a development store with production-like settings (deployed app, real Postgres):
