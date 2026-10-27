@@ -11,6 +11,7 @@ export function createFakeStore(currency = "USD") {
   const calls = { updates: 0, lookups: 0 };
   const failVariants = new Set<string>();
   let failNextUpdates = 0;
+  let loseNextResponses = 0;
 
   const gateway: AdminGateway = {
     async getShopCurrency() {
@@ -56,6 +57,10 @@ export function createFakeStore(currency = "USD") {
           result.updated.push(u.id);
         }
       }
+      if (loseNextResponses > 0) {
+        loseNextResponses -= 1;
+        throw new Error("Request timed out after Shopify applied it (simulated)");
+      }
       return result;
     },
   };
@@ -68,6 +73,10 @@ export function createFakeStore(currency = "USD") {
     failVariants,
     failUpdates(n: number) {
       failNextUpdates = n;
+    },
+    /** The next n updates are applied in the store, but the caller gets an error. */
+    loseResponses(n: number) {
+      loseNextResponses = n;
     },
     addProduct(productId: string, list: { id: string; price: string; compareAtPrice?: string | null }[]) {
       for (const v of list) {

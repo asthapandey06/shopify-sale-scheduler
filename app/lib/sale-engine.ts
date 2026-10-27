@@ -181,6 +181,37 @@ export function createSaleEngine(deps: EngineDeps) {
     return { succeeded, failed };
   }
 
+  /**
+   * Checks PENDING items against live prices before writing. A retry may come long after the snapshot,
+   * or after a write whose response was lost, so only items still at their original price are returned.
+   */
+  async function unwrittenAtOriginalPrice(gateway: AdminGateway, items: SaleItemRecord[]): Promise<SaleItemRecord[]> {
+    const toWrite: SaleItemRecord[] = [];
+    for (const part of chunk(items, batchSize)) {
+      const live = await gateway.getVariantPrices(part.map((i) => i.variantId));
+      const statusUpdates: { id: string; status: ItemStatus; message: string | null }[] = [];
+      for (const item of part) {
+        const current = live.get(item.variantId);
+        if (!current) {
+          statusUpdates.push({ id: item.id, status: ITEM_STATUS.SKIPPED, message: "Variant no longer exists" });
+        } else if (moneyEquals(current.price, item.originalPrice)) {
+          toWrite.push(item);
+        } else if (moneyEquals(current.price, item.salePrice)) {
+          // An earlier attempt's write reached Shopify but its response was lost.
+          statusUpdates.push({ id: item.id, status: ITEM_STATUS.APPLIED, message: null });
+        } else {
+          statusUpdates.push({
+            id: item.id,
+            status: ITEM_STATUS.CONFLICT,
+            message: `Price was edited before the sale started (now ${current.price}); left unchanged`,
+          });
+        }
+      }
+      await repo.setItemStatuses(statusUpdates);
+    }
+    return toWrite;
+  }
+
   async function activate(sale: SaleRecord): Promise<void> {
     const now = deps.now();
 
@@ -205,7 +236,10 @@ export function createSaleEngine(deps: EngineDeps) {
       if ((await repo.countItems(sale.id)) === 0) {
         await snapshot(sale, gateway);
       }
-      const pending = await repo.listItems(sale.id, [ITEM_STATUS.PENDING]);
+      const pending = await unwrittenAtOriginalPrice(
+        gateway,
+        await repo.listItems(sale.id, [ITEM_STATUS.PENDING]),
+      );
       const { failed } = await writePrices(
         sale.shop,
         gateway,

@@ -290,3 +290,43 @@ test("a crash after restoring but before bookkeeping is recorded as reverted, no
   assert.equal(price("11").price, "100.00");
   assert.equal(mem.sales.get("sale_1")!.status, "COMPLETED");
 });
+
+test("an activation retry leaves prices the merchant changed after the snapshot alone", async () => {
+  const { mem, store, time, engine, addSale, price } = setup();
+  addSale();
+  store.failUpdates(1);
+  await engine.tick();
+  assert.equal(mem.sales.get("sale_1")!.status, "ACTIVATING");
+  store.variants.get("gid://shopify/ProductVariant/11")!.price = "120.00"; // merchant edit between attempts
+  time.advance(61_000);
+  await engine.tick();
+  assert.equal(mem.sales.get("sale_1")!.status, "ACTIVE");
+  assert.equal(price("11").price, "120.00", "not the stale 80.00");
+  assert.equal(price("12").price, "40.00");
+  const item = [...mem.items.values()].find((i) => i.variantId.endsWith("/11"))!;
+  assert.equal(item.status, "CONFLICT");
+
+  time.set("2026-11-01T12:00:00Z");
+  await engine.tick();
+  assert.equal(price("11").price, "120.00", "merchant's price survives the end of the sale");
+  assert.equal(price("12").price, "50.00");
+});
+
+test("an update applied by Shopify whose response was lost is not written twice", async () => {
+  const { mem, store, time, engine, addSale, price } = setup();
+  addSale();
+  store.loseResponses(1);
+  await engine.tick();
+  assert.equal(mem.sales.get("sale_1")!.status, "ACTIVATING");
+  assert.equal(price("11").price, "80.00");
+  const updatesBefore = store.calls.updates;
+  time.advance(61_000);
+  await engine.tick();
+  assert.equal(mem.sales.get("sale_1")!.status, "ACTIVE");
+  assert.equal(store.calls.updates, updatesBefore, "already-applied prices are recorded, not rewritten");
+  assert.ok([...mem.items.values()].every((i) => i.status === "APPLIED"));
+  time.set("2026-11-01T12:00:00Z");
+  await engine.tick();
+  assert.equal(price("11").price, "100.00");
+  assert.equal(price("12").price, "50.00");
+});
