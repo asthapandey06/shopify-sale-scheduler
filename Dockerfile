@@ -14,10 +14,11 @@ RUN apk add --no-cache openssl tini
 WORKDIR /app
 ENV NODE_ENV=production
 COPY package.json package-lock.json* ./
-RUN npm ci --omit=dev && npm cache clean --force
-COPY --from=build /app/build ./build
 COPY prisma ./prisma
-RUN npx prisma generate && chown -R node:node /app
+# The Prisma client is generated at build time, so the app files can stay root-owned and read-only for
+# the node user (no chown: that would duplicate node_modules in another layer).
+RUN npm ci --omit=dev && npx prisma generate && npm cache clean --force
+COPY --from=build /app/build ./build
 USER node
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s CMD wget -qO- http://127.0.0.1:3000/healthz || exit 1
