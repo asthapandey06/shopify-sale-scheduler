@@ -42,8 +42,11 @@ model Shop {
   // Per-shop lease so only one worker changes a shop's prices at a time.
   lockOwner     String?
   lockedUntil   DateTime?
+  // Time of the latest install / OAuth (late app/uninstalled retries older than this are ignored).
   installedAt   DateTime  @default(now())
   uninstalledAt DateTime?
+  // Set while the merchant has paused PriceTide: scheduled sales don't start; price restores still run.
+  pausedAt      DateTime?
   updatedAt     DateTime  @updatedAt
 }
 
