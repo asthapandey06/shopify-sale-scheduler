@@ -121,6 +121,25 @@ test/           *.test.ts suites + helpers (fake Shopify store, clock).
 - The graph is a map, not the source of truth: always read the actual file before editing it.
 - After significant changes run `graphify . --update` (not a full rebuild). Never point Graphify at `.env*`.
 
+## Project skills and tools (Claude Code)
+- Skills live in `.claude/skills/`. Use them instead of improvising:
+  - `verify-change` — typecheck, test, lint; run after every code change.
+  - `sale-engine-change` — required procedure for anything touching pricing, apply/revert, scheduler.
+  - `db-migration` (manual: `/db-migration`) — Prisma schema changes.
+  - `app-store-audit` — check against Shopify App Store requirements.
+  - `ui-smoke-test` — browser checks via the Playwright MCP.
+  - `ship-commit` (manual: `/ship-commit`) — safe commit and push.
+  - `shopify-graphql-change` — adding/changing Admin GraphQL calls.
+  - `admin-ui-change` — admin pages, Polaris web components, loaders/actions.
+- Subagents live in `.claude/agents/`. Delegate to them:
+  - `code-reviewer` — review diffs before committing (read-only).
+  - `security-auditor` — auth, tenant isolation, webhooks, secrets (read-only).
+  - `test-runner` — run checks and return a short summary (keeps logs out of context).
+  - `shopify-docs-researcher` — verify Shopify API fields, versions and App Store rules with links.
+  - `ui-tester` — browser checks through the Playwright MCP.
+- MCP: `playwright` (in `.mcp.json`) runs headless Chromium for UI checks. Never type the owner's
+  passwords or 2FA codes into a browser; read-only unless the owner explicitly asks.
+
 ## Development environment
 - Development happens in **Google Cloud Shell** (repo at `~/node/sale-scheduler`), opened from desktop
   VS Code over SSH. Only `$HOME` persists (5 GB limit) — keep caches small (`npm cache clean --force`).

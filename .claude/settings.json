@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "allow": [
+      "Bash(npm install *)", "Bash(npm install)", "Bash(npm ci)",
+      "Bash(npm run typecheck)", "Bash(npm test)", "Bash(npm run test *)",
+      "Bash(npm run lint)", "Bash(npm run check)", "Bash(npm run build)",
+      "Bash(npx prisma generate)", "Bash(npx prisma validate)", "Bash(npx prisma format)",
+      "Bash(node --test *)", "Bash(graphify *)",
+      "Bash(git status)", "Bash(git diff *)", "Bash(git diff)", "Bash(git log *)",
+      "Bash(git add *)", "Bash(git commit *)", "Bash(git fetch *)",
+      "Bash(ls *)", "Bash(cat *)", "Bash(grep *)", "Bash(rg *)", "Bash(find *)", "Bash(du *)", "Bash(df *)"
+    ],
+    "ask": [
+      "Bash(git push *)", "Bash(git pull *)", "Bash(git rebase *)", "Bash(git reset *)",
+      "Bash(npx prisma migrate *)", "Bash(npm run deploy)", "Bash(shopify *)", "Bash(rm *)",
+      "Bash(find * -delete*)", "Bash(find * -exec *)", "Bash(find * -execdir *)"
+    ],
+    "deny": [
+      "Read(**/.env)", "Read(**/.env.*)", "Edit(**/.env)",
+      "Bash(cat *.env*)", "Bash(grep *.env*)", "Bash(rg *.env*)",
+      "Read(~/.ssh/**)", "Read(~/.claude/.credentials.json)",
+      "Bash(gcloud *)", "Bash(sudo *)", "Bash(curl *)", "Bash(git push --force *)"
+    ]
+  }
+}
