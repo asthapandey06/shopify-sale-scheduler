@@ -457,3 +457,14 @@ test("an ACTIVATING sale of a paused shop is rolled back on the next pass", asyn
   assert.equal(mem.sales.get("sale_1")!.status, "COMPLETED");
   assert.equal(price("11").price, "100.00");
 });
+
+test("the end-of-sale audit records restored and conflicting variants for support", async () => {
+  const { mem, store, time, engine, addSale } = setup();
+  addSale();
+  await engine.tick();
+  store.variants.get("gid://shopify/ProductVariant/11")!.price = "75.00"; // merchant edit
+  time.set("2026-11-01T12:00:00Z");
+  await engine.tick();
+  const entry = mem.auditLog.find((e) => e.action === "sale.reverted")!;
+  assert.deepEqual(entry.detail, { restored: 1, conflicts: 1 });
+});

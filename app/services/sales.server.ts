@@ -157,6 +157,8 @@ export async function countRunningSales(shop: string): Promise<number> {
 }
 
 export async function audit(shop: string, saleId: string | null, action: string, detail?: Record<string, unknown>) {
+  // Also in the logs, so support can follow a shop's actions without database access. No personal data.
+  logger.info("Merchant action", { shop, saleId, action, ...detail });
   try {
     await prisma.auditLog.create({
       data: { shop, saleId, action, detail: detail ? JSON.stringify(detail).slice(0, 2000) : null },

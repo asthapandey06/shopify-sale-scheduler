@@ -349,6 +349,8 @@ export function createSaleEngine(deps: EngineDeps) {
       // are checked against live prices too.
       const items = await repo.listItems(sale.id, [ITEM_STATUS.APPLIED, ITEM_STATUS.PENDING, ITEM_STATUS.FAILED]);
       let stillApplied = 0;
+      let restored = 0;
+      let conflicts = 0;
 
       for (const part of chunk(items, batchSize)) {
         const live = await gateway.getVariantPrices(part.map((i) => i.variantId));
@@ -378,9 +380,10 @@ export function createSaleEngine(deps: EngineDeps) {
           }
         }
         await repo.setItemStatuses(statusUpdates);
+        conflicts += statusUpdates.filter((u) => u.status === ITEM_STATUS.CONFLICT).length;
 
         // Failed restores stay APPLIED so the next attempt retries them.
-        const { failed } = await writePrices(
+        const { succeeded, failed } = await writePrices(
           sale.shop,
           gateway,
           toRestore,
@@ -389,6 +392,7 @@ export function createSaleEngine(deps: EngineDeps) {
           ITEM_STATUS.APPLIED,
         );
         stillApplied += failed;
+        restored += succeeded;
         await renew(sale.shop);
       }
 
@@ -404,8 +408,9 @@ export function createSaleEngine(deps: EngineDeps) {
         nextAttemptAt: null,
       });
       if (!completed) return;
-      await repo.audit({ shop: sale.shop, saleId: sale.id, action: "sale.reverted" });
-      logger.info("Sale reverted", { shop: sale.shop, saleId: sale.id });
+      // Counts for this pass; conflicts are prices the merchant edited during the sale (left alone).
+      await repo.audit({ shop: sale.shop, saleId: sale.id, action: "sale.reverted", detail: { restored, conflicts } });
+      logger.info("Sale reverted", { shop: sale.shop, saleId: sale.id, restored, conflicts });
     } catch (error) {
       // Not a failed attempt: the new lease holder carries on from the saved state.
       if (error instanceof LeaseLostError) throw error;
