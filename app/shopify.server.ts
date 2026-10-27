@@ -10,7 +10,7 @@ import prisma from "./db.server";
 import { config, PLAN } from "./config.server";
 import { createTokenCipher } from "./lib/crypto";
 import { EncryptedSessionStorage } from "./services/session-storage.server";
-import { ensureShop } from "./services/sale-repo.server";
+import { markInstalled } from "./services/sale-repo.server";
 import { refreshDevStoreFlag } from "./services/shop-plan.server";
 
 const shopify = shopifyApp({
@@ -37,7 +37,7 @@ const shopify = shopifyApp({
   },
   hooks: {
     afterAuth: async ({ session, admin }) => {
-      await ensureShop(session.shop);
+      await markInstalled(session.shop);
       await refreshDevStoreFlag(admin, session.shop);
     },
   },

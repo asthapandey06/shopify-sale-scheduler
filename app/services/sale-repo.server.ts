@@ -71,6 +71,19 @@ function toItemRecord(row: SaleItemRow): SaleItemRecord {
   };
 }
 
+/**
+ * Records a completed (re)install / OAuth. installedAt is the time of the latest one, so app/uninstalled
+ * events triggered before it (late Shopify retries) can be told apart from a real uninstall.
+ */
+export async function markInstalled(shop: string, db: PrismaClient = prisma): Promise<void> {
+  const now = new Date();
+  await db.shop.upsert({
+    where: { shop },
+    create: { shop, installedAt: now },
+    update: { installedAt: now, uninstalledAt: null },
+  });
+}
+
 /** Ensures a Shop row exists (safe under concurrent calls). */
 export async function ensureShop(shop: string, db: PrismaClient = prisma): Promise<void> {
   await db.shop.upsert({

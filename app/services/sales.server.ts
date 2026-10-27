@@ -181,7 +181,15 @@ export async function purgeShopData(shop: string): Promise<void> {
  * changed. Scheduled sales are cancelled; running ones are flagged so the
  * merchant sees what happened if they reinstall.
  */
-export async function handleUninstall(shop: string): Promise<void> {
+export async function handleUninstall(shop: string, triggeredAt?: Date): Promise<boolean> {
+  if (triggeredAt) {
+    const row = await prisma.shop.findUnique({ where: { shop }, select: { installedAt: true } });
+    if (row && row.installedAt.getTime() > triggeredAt.getTime()) {
+      // A late retry of an uninstall that happened before the merchant reinstalled.
+      logger.warn("Ignoring app/uninstalled triggered before the latest install", { shop });
+      return false;
+    }
+  }
   await prisma.$transaction([
     prisma.session.deleteMany({ where: { shop } }),
     prisma.sale.updateMany({
@@ -200,6 +208,7 @@ export async function handleUninstall(shop: string): Promise<void> {
       data: { billingActive: false, uninstalledAt: new Date(), lockOwner: null, lockedUntil: null },
     }),
   ]);
+  return true;
 }
 
 /**

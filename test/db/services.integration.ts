@@ -1,6 +1,6 @@
 // Integration tests against a real PostgreSQL database (DATABASE_URL). Run with `npm run test:db`.
 // They cover what only the database can prove: Prisma queries, shop scoping and webhook handlers.
-import { after, before, test } from "node:test";
+import { after, beforeEach, test } from "node:test";
 import assert from "node:assert/strict";
 import { randomBytes, randomUUID } from "node:crypto";
 
@@ -15,7 +15,7 @@ process.env.BILLING_TEST_MODE = "false";
 const { Prisma } = await import("@prisma/client");
 const { default: prisma } = await import("../../app/db.server.ts");
 const sales = await import("../../app/services/sales.server.ts");
-const { createPrismaSaleRepo } = await import("../../app/services/sale-repo.server.ts");
+const { createPrismaSaleRepo, markInstalled } = await import("../../app/services/sale-repo.server.ts");
 const { toErrorResponse, assertId } = await import("../../app/services/http.server.ts");
 
 const run = randomUUID().slice(0, 8);
@@ -65,7 +65,8 @@ async function seedShop(shop: string) {
 
 const statusOf = async (id: string) => (await prisma.sale.findUniqueOrThrow({ where: { id } })).status;
 
-before(cleanup);
+// Clean before each test so one failure can't cascade into the next.
+beforeEach(cleanup);
 after(async () => {
   await cleanup();
   await prisma.$disconnect();
@@ -89,6 +90,23 @@ test("app/uninstalled: sessions removed, sales stopped, lease and billing cleare
   // Another shop is untouched.
   assert.equal(await prisma.session.count({ where: { shop: OTHER } }), 1);
   assert.equal(await statusOf(otherIds.ACTIVE), "ACTIVE");
+  await cleanup();
+});
+
+test("a late app/uninstalled delivery from before a reinstall is ignored", async () => {
+  const ids = await seedShop(SHOP);
+  const uninstalledAt = new Date(Date.now() - 60_000);
+  await markInstalled(SHOP); // reinstalled after the uninstall event was triggered
+  await sales.handleUninstall(SHOP, uninstalledAt); // Shopify's retry arrives now
+
+  assert.equal(await prisma.session.count({ where: { shop: SHOP } }), 1, "new session kept");
+  assert.equal(await statusOf(ids.SCHEDULED), "SCHEDULED");
+  assert.equal(await statusOf(ids.ACTIVE), "ACTIVE");
+  assert.equal((await prisma.shop.findUniqueOrThrow({ where: { shop: SHOP } })).billingActive, true);
+
+  // An uninstall triggered after the (re)install still applies.
+  await sales.handleUninstall(SHOP, new Date(Date.now() + 1_000));
+  assert.equal(await statusOf(ids.SCHEDULED), "CANCELLED");
   await cleanup();
 });
 
