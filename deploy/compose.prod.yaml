@@ -1,0 +1,50 @@
+# Production on a single VM: the PriceTide container behind Caddy (automatic HTTPS).
+# Run from this folder. See DEPLOY.md.
+#   deploy/.env            PRICETIDE_TAG, APP_DOMAIN (read by compose itself)
+#   deploy/.env.production app secrets and settings (read by the app container)
+name: pricetide
+
+services:
+  app:
+    image: pricetide:${PRICETIDE_TAG:?set PRICETIDE_TAG in deploy/.env}
+    env_file:
+      - path: .env.production
+        required: true
+    restart: unless-stopped
+    # SIGTERM lets the scheduler finish its pass and release shop leases (the app waits up to 20 s).
+    stop_grace_period: 30s
+    # Not published on the host: only Caddy talks to it.
+    expose:
+      - "3000"
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "10"
+
+  caddy:
+    image: public.ecr.aws/docker/library/caddy:2.10.2
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:?set APP_DOMAIN in deploy/.env}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+volumes:
+  # Holds the TLS certificates; keep it (don't `docker compose down -v`).
+  caddy_data:
+  caddy_config:

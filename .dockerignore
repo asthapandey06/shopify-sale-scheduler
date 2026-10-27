@@ -8,3 +8,8 @@ node_modules
 test
 *.md
 !README.md
+**/.env
+**/.env.*
+deploy
+graphify-out
+.playwright-mcp
