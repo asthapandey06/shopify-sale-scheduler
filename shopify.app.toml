@@ -1,36 +1,44 @@
-# Run `npm run config:link` once to connect this file to your app in the Partner Dashboard.
-client_id = ""
-name = "PriceTide: Scheduled Sales"
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+
+client_id = "6f11327982fadfacde57f6b18a004ca8"
+name = "price-tide"
 embedded = true
+application_url = "https://shopify.dev/apps/default-app-home"
 
 [access_scopes]
-# Least privilege: the app only reads and updates product variant prices.
+# Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
 scopes = "write_products"
 
 [webhooks]
 api_version = "2026-10"
 
   [[webhooks.subscriptions]]
-  topics = ["app/uninstalled"]
+  topics = [ "app/uninstalled" ]
   uri = "/webhooks/app/uninstalled"
 
   [[webhooks.subscriptions]]
-  topics = ["app/scopes_update"]
+  topics = [ "app/scopes_update" ]
   uri = "/webhooks/app/scopes_update"
 
   [[webhooks.subscriptions]]
-  topics = ["app_subscriptions/update"]
+  topics = [ "app_subscriptions/update" ]
   uri = "/webhooks/app_subscriptions/update"
 
-  # Mandatory privacy (GDPR) webhooks for App Store apps.
   [[webhooks.subscriptions]]
-  compliance_topics = ["customers/data_request"]
+  compliance_topics = [ "customers/data_request" ]
   uri = "/webhooks/customers/data_request"
 
   [[webhooks.subscriptions]]
-  compliance_topics = ["customers/redact"]
+  compliance_topics = [ "customers/redact" ]
   uri = "/webhooks/customers/redact"
 
   [[webhooks.subscriptions]]
-  compliance_topics = ["shop/redact"]
+  compliance_topics = [ "shop/redact" ]
   uri = "/webhooks/shop/redact"
+
+[auth]
+redirect_urls = [ "https://shopify.dev/apps/default-app-home/api/auth" ]
+
+[build]
+include_config_on_deploy = true
+automatically_update_urls_on_dev = true

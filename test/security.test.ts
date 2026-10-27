@@ -138,7 +138,7 @@ test("cleanText strips every unsafe range and keeps tabs and non-ASCII text", ()
   const unsafe = ["\u0000", "\u0008", "\n", "\r", "\u001f", "\u007f", "‪", "‮", "⁦", "⁩"];
   for (const ch of unsafe) assert.equal(cleanText(`a${ch}b`, 10), "ab", `U+${ch.charCodeAt(0).toString(16)}`);
   assert.equal(cleanText("a\tb", 10), "a\tb");
-  assert.equal(cleanText("Été 🎉 セール  ", 20), "Été 🎉 セール  ".trim());
+  assert.equal(cleanText("Été 🎉 セール ", 20), "Été 🎉 セール ".trim());
 });
 
 test("JSON body size limit", async () => {
