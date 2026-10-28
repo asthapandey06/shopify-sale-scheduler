@@ -45,6 +45,21 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   };
 };
 
+/**
+ * Starts the plan approval: throws a redirect to Shopify's approval page on success. The library's own
+ * "Error while billing the store" hides Shopify's reason in `errorData`, so log that for diagnosis.
+ */
+async function requestPlan(billing: { request: (options: { plan: string; isTest: boolean }) => Promise<unknown> }, shop: string, isTest: boolean) {
+  try {
+    await billing.request({ plan: PLAN, isTest });
+  } catch (error) {
+    if (error instanceof Response) throw error;
+    const errorData = (error as { errorData?: unknown }).errorData;
+    logger.error("Shopify rejected the plan request", { shop, isTest, errorData: JSON.stringify(errorData ?? null), error: error as Error });
+    throw new HttpError(502, "Shopify couldn't start the plan approval. Please try again in a moment.");
+  }
+}
+
 export const action = async ({ request }: ActionFunctionArgs) => {
   try {
     const { session, billing } = await authenticate.admin(request);
@@ -55,8 +70,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     if (intent === "subscribe") {
       await audit(session.shop, null, "billing.subscribe_requested");
-      // Throws a redirect to Shopify's approval page.
-      await billing.request({ plan: PLAN, isTest });
+      await requestPlan(billing, session.shop, isTest);
       return data({ ok: true as const, message: "Redirecting to Shopify…" });
     }
 
@@ -100,7 +114,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       if (!check.hasActivePayment) {
         // Still paused until a plan is approved: throws a redirect to Shopify's approval page, and the
         // merchant resumes from here once they're back with an active plan.
-        await billing.request({ plan: PLAN, isTest });
+        await requestPlan(billing, session.shop, isTest);
       }
       await resumeShop(session.shop);
       kickScheduler();

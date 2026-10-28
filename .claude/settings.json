@@ -9,7 +9,10 @@
       "Bash(node --test *)", "Bash(graphify *)",
       "Bash(git status)", "Bash(git diff *)", "Bash(git diff)", "Bash(git log *)",
       "Bash(git add *)", "Bash(git commit *)", "Bash(git fetch *)",
-      "Bash(ls *)", "Bash(cat *)", "Bash(grep *)", "Bash(rg *)", "Bash(find *)", "Bash(du *)", "Bash(df *)"
+      "Bash(ls *)", "Bash(cat *)", "Bash(grep *)", "Bash(rg *)", "Bash(find *)", "Bash(du *)", "Bash(df *)",
+      "Read(./.env.example)",
+      "Edit(./.env.example)",
+      "Bash(cat .env.example)"
     ],
     "ask": [
       "Bash(git push *)", "Bash(git pull *)", "Bash(git rebase *)", "Bash(git reset *)",
