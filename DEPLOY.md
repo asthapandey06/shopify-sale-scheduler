@@ -81,8 +81,9 @@ Images are tagged by commit, so every previous release stays on the VM for rollb
 
 ## 4. Production environment
 
-Create one file, `/opt/pricetide/.env` (git-ignored; never commit it; `chmod 600 .env`). Docker Compose, the
-app container and `backup.sh` all read it, so there is no second env file. Start from `.env.example`:
+Create one file, `/opt/pricetide/.env.production` (git-ignored; never commit it; `chmod 600 .env.production`).
+Docker Compose, the app container and `backup.sh` all read it. The root `.env` is for development only.
+Start from `.env.example`:
 ```
 PRICETIDE_TAG=<the TAG from step 3>
 APP_DOMAIN=app.pricetide.example
@@ -115,8 +116,8 @@ boot and refuses to start with a list of every problem.
 
 ```bash
 cd /opt/pricetide/deploy
-docker compose --env-file ../.env -f compose.prod.yaml up -d
-docker compose --env-file ../.env -f compose.prod.yaml logs -f app     # migrations, then "PriceTide scheduler started"
+docker compose --env-file ../.env.production -f compose.prod.yaml up -d
+docker compose --env-file ../.env.production -f compose.prod.yaml logs -f app     # migrations, then "PriceTide scheduler started"
 ```
 
 On start the app container runs `prisma migrate deploy` over `DIRECT_URL`, then serves on port 3000. Caddy
@@ -156,7 +157,7 @@ Dashboard and run the live test plan in `APP_STORE_SUBMISSION.md` › section 4.
   `https://app.pricetide.example/healthz`, every 5 minutes, alerting your email/phone. This is the alarm for
   "the scheduler stopped" or "the database is down" (see RUNBOOK.md).
 - **Logs**: JSON lines with secrets redacted, rotated by Docker (20 MB × 10 files):
-  `docker compose --env-file ../.env -f compose.prod.yaml logs --since 1h app`.
+  `docker compose --env-file ../.env.production -f compose.prod.yaml logs --since 1h app`.
 - **OS updates**: `unattended-upgrades` applies security patches; reboot monthly (the stack comes back on its own).
 
 ## 8. Backups
@@ -189,9 +190,9 @@ Backups contain shop domains, sale settings and prices. Shopify tokens in them a
 cd /opt/pricetide && git fetch && git checkout <commit or tag>
 TAG=$(git rev-parse --short HEAD) && docker build -t pricetide:$TAG .
 # If this release has a new folder in prisma/migrations: create a Neon branch "before-$TAG" first.
-sed -i "s/^PRICETIDE_TAG=.*/PRICETIDE_TAG=$TAG/" .env
-cd deploy && docker compose --env-file ../.env -f compose.prod.yaml up -d
-docker compose --env-file ../.env -f compose.prod.yaml logs -f app      # migrations, scheduler started, no errors
+sed -i "s/^PRICETIDE_TAG=.*/PRICETIDE_TAG=$TAG/" .env.production
+cd deploy && docker compose --env-file ../.env.production -f compose.prod.yaml up -d
+docker compose --env-file ../.env.production -f compose.prod.yaml logs -f app      # migrations, scheduler started, no errors
 ```
 The old container gets SIGTERM, finishes its scheduler pass and releases shop leases (up to ~20 s), then
 the new one starts. Expect a few seconds of downtime: Shopify retries webhooks, and the scheduler catches
@@ -201,8 +202,8 @@ up on its next pass. Run `npm run deploy` only when `shopify.app.toml` changed.
 
 ```bash
 docker images pricetide --format '{{.Tag}}  {{.CreatedSince}}'   # pick the previous tag
-sed -i "s/^PRICETIDE_TAG=.*/PRICETIDE_TAG=<previous tag>/" /opt/pricetide/.env
-cd /opt/pricetide/deploy && docker compose --env-file ../.env -f compose.prod.yaml up -d
+sed -i "s/^PRICETIDE_TAG=.*/PRICETIDE_TAG=<previous tag>/" /opt/pricetide/.env.production
+cd /opt/pricetide/deploy && docker compose --env-file ../.env.production -f compose.prod.yaml up -d
 ```
 Migrations only move forward. So far they are all additive (new nullable column, index swap), so an older
 image runs fine on the newer schema. If a future migration is not backward compatible, roll back by
@@ -214,7 +215,7 @@ Do this yearly, or immediately if the key may have leaked.
 
 1. Generate a new key: `echo "k2:$(openssl rand -base64 32)"` and save it in your password manager.
 2. Put it **first**, keeping the old one: `TOKEN_ENCRYPTION_KEYS=k2:NEW…,k1:OLD…` in
-   the root `.env`, then `docker compose --env-file ../.env -f compose.prod.yaml up -d`. New and refreshed tokens are
+   the root `.env.production`, then `docker compose --env-file ../.env.production -f compose.prod.yaml up -d`. New and refreshed tokens are
    encrypted with `k2`; `k1` still decrypts older ones.
 3. Watch the old key drain (Neon SQL editor):
    ```sql
@@ -241,7 +242,7 @@ then follow SECURITY.md › "If the database is exposed".
       `automatically_update_urls_on_dev = false`
 - [ ] Neon prod project; pooled `DATABASE_URL` + direct `DIRECT_URL`
 - [ ] VM with reserved IP; ports 80/443 open in the security list **and** iptables; DNS `A` record
-- [ ] Root `.env` (chmod 600); encryption key saved in a password manager
+- [ ] Root `.env.production` (chmod 600); encryption key saved in a password manager
 - [ ] `docker compose … up -d`; `/healthz` returns ok over https
 - [ ] `npm run deploy` run; app installs on a dev store; live test plan passed
 - [ ] Uptime monitor on `/healthz`; nightly backup cron + off-VM copy; restore tested once

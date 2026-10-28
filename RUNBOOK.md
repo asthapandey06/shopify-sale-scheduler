@@ -15,10 +15,10 @@ incidents in `SECURITY.md`.
 
 **Logs** (JSON lines, secrets redacted; on the VM in `/opt/pricetide/deploy`):
 ```bash
-docker compose --env-file ../.env -f compose.prod.yaml logs --since 24h app | grep '"shop":"<store>.myshopify.com"'
-docker compose --env-file ../.env -f compose.prod.yaml logs --since 2h app | grep -E '"level":"(warn|error)"'
+docker compose --env-file ../.env.production -f compose.prod.yaml logs --since 24h app | grep '"shop":"<store>.myshopify.com"'
+docker compose --env-file ../.env.production -f compose.prod.yaml logs --since 2h app | grep -E '"level":"(warn|error)"'
 # pretty-print with jq (sudo apt-get install jq):
-docker compose --env-file ../.env -f compose.prod.yaml logs --no-log-prefix --since 24h app | jq -R 'fromjson? | select(.shop=="<store>.myshopify.com")'
+docker compose --env-file ../.env.production -f compose.prod.yaml logs --no-log-prefix --since 24h app | jq -R 'fromjson? | select(.shop=="<store>.myshopify.com")'
 ```
 
 | Log message | Meaning |
@@ -130,8 +130,8 @@ explain what happened.
 
 ## 4. The scheduler stopped (sales don't start or end)
 
-1. Is the app up? `curl -s https://<app domain>/healthz` and `docker compose --env-file ../.env -f compose.prod.yaml ps`
-   (should be `healthy`). If down: `docker compose --env-file ../.env -f compose.prod.yaml up -d` and read the logs; a config
+1. Is the app up? `curl -s https://<app domain>/healthz` and `docker compose --env-file ../.env.production -f compose.prod.yaml ps`
+   (should be `healthy`). If down: `docker compose --env-file ../.env.production -f compose.prod.yaml up -d` and read the logs; a config
    error lists every problem at boot.
 2. Overdue work (anything here more than a few minutes old means the scheduler isn't keeping up):
    ```sql
@@ -151,7 +151,7 @@ explain what happened.
    ```
 5. `SCHEDULER_ENABLED` must be true (default) on the VM; with `false` nothing runs sales except
    `POST /jobs/tick`.
-6. Restart: `docker compose --env-file ../.env -f compose.prod.yaml restart app` (safe at any time). Overdue starts run on the
+6. Restart: `docker compose --env-file ../.env.production -f compose.prod.yaml restart app` (safe at any time). Overdue starts run on the
    next pass; sales whose end time already passed are restored; a sale whose whole window passed is marked
    FAILED ("window passed") rather than started late.
 
@@ -164,7 +164,7 @@ and `Unhandled server error` with Prisma connection errors; merchants see "Somet
    the first connection after idle takes a few seconds (`connect_timeout=15` covers it).
 2. Check limits: compute hours / storage on your plan, and the pooler's connection limit.
 3. Check credentials: a reset password or rotated role means updating `DATABASE_URL` and `DIRECT_URL` in
-   the root `.env`, then `docker compose --env-file ../.env -f compose.prod.yaml up -d`.
+   the root `.env.production`, then `docker compose --env-file ../.env.production -f compose.prod.yaml up -d`.
 4. While it's down: no prices change (nothing can be written without the database first), webhooks fail and
    Shopify retries them, merchants can't open the app. When it's back, everything resumes on the next
    pass: overdue sales start or end, reverts continue.
@@ -176,11 +176,11 @@ and `Unhandled server error` with Prisma connection errors; merchants see "Somet
 ## 6. Other incidents
 
 - **Webhooks rejected (401) / logins failing after a secret change**: `SHOPIFY_API_SECRET` in
-  `.env` must match the Partner Dashboard; restart after changing it.
+  `.env.production` must match the Partner Dashboard; restart after changing it.
 - **`Could not decrypt stored session`**: the key used for those tokens isn't in `TOKEN_ENCRYPTION_KEYS`
   (lost or removed too early). Put the old key back (second position) if you have it; otherwise those shops
   re-authenticate automatically on next open. No sale data is affected.
-- **HTTPS certificate errors**: `docker compose --env-file ../.env -f compose.prod.yaml logs caddy`; ports 80/443 must be open
+- **HTTPS certificate errors**: `docker compose --env-file ../.env.production -f compose.prod.yaml logs caddy`; ports 80/443 must be open
   (security list + iptables) and DNS must point at the VM.
 - **Disk full on the VM**: `docker system df`; remove old images you no longer need for rollback with
   `docker image rm pricetide:<old tag>`, and old dumps in `/var/backups/pricetide`.
