@@ -1,14 +1,14 @@
 # Production on a single VM: the PriceTide container behind Caddy (automatic HTTPS).
 # Run from this folder. See DEPLOY.md.
-#   deploy/.env            PRICETIDE_TAG, APP_DOMAIN (read by compose itself)
-#   deploy/.env.production app secrets and settings (read by the app container)
+# One env file for everything: the repo-root .env (PRICETIDE_TAG and APP_DOMAIN for compose, the rest for the app).
+# Always pass it explicitly: docker compose --env-file ../.env -f compose.prod.yaml <command>
 name: pricetide
 
 services:
   app:
-    image: pricetide:${PRICETIDE_TAG:?set PRICETIDE_TAG in deploy/.env}
+    image: pricetide:${PRICETIDE_TAG:?set PRICETIDE_TAG in the root .env}
     env_file:
-      - path: .env.production
+      - path: ../.env
         required: true
     restart: unless-stopped
     # SIGTERM lets the scheduler finish its pass and release shop leases (the app waits up to 20 s).
@@ -29,7 +29,7 @@ services:
       app:
         condition: service_healthy
     environment:
-      APP_DOMAIN: ${APP_DOMAIN:?set APP_DOMAIN in deploy/.env}
+      APP_DOMAIN: ${APP_DOMAIN:?set APP_DOMAIN in the root .env}
     ports:
       - "80:80"
       - "443:443"

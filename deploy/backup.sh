@@ -11,9 +11,9 @@ KEEP="${KEEP:-14}"
 mkdir -p "$BACKUP_DIR"
 file="$BACKUP_DIR/pricetide-$(date -u +%Y%m%dT%H%M%SZ).dump"
 
-# pg_dump runs in a container and reads DIRECT_URL (non-pooled) from the app's env file, so the URL
+# pg_dump runs in a container and reads DIRECT_URL (non-pooled) from the root .env, so the URL
 # never appears in the process list or shell history. pg_dump 17 also dumps older servers.
-docker run --rm --env-file .env.production public.ecr.aws/docker/library/postgres:17-alpine \
+docker run --rm --env-file ../.envpublic.ecr.aws/docker/library/postgres:17-alpine \
   sh -c 'pg_dump --format=custom --no-owner --dbname="${DIRECT_URL:-$DATABASE_URL}"' > "$file.tmp"
 mv "$file.tmp" "$file"
 chmod 600 "$file"
