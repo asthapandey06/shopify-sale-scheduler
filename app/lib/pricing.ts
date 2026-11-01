@@ -96,3 +96,15 @@ export function computeSalePrice(input: PriceInput): PriceResult {
 
   return { ok: true, salePrice: formatDecimal(sale, decimals), compareAtPrice };
 }
+
+/**
+ * True when a fixed-amount discount would be skipped for a variant priced `price`, so the create form can warn
+ * before the sale is scheduled. Always false for percentages (they only skip at 100% or more, which is rejected).
+ */
+export function fixedDiscountExceedsPrice(discountType: DiscountType, discountValue: string, price: string): boolean {
+  if (discountType !== "FIXED_AMOUNT") return false;
+  const value = parseDecimal(discountValue.trim());
+  const base = parseDecimal(price);
+  if (value === null || base === null || value === 0n) return false;
+  return value >= base;
+}

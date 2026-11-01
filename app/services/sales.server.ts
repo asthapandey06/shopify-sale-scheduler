@@ -325,7 +325,8 @@ export async function handleUninstall(
     }),
     prisma.shop.updateMany({
       where: { shop },
-      data: { billingActive: false, uninstalledAt: new Date(), lockOwner: null, lockedUntil: null },
+      // A pause doesn't survive an uninstall: a reinstall starts at the plan page like any new install.
+      data: { billingActive: false, uninstalledAt: new Date(), pausedAt: null, lockOwner: null, lockedUntil: null },
     }),
   ]);
   return true;

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
-import { createShopifyGateway, isThrottled } from "../app/services/shopify-gateway.server.ts";
+import { createShopifyGateway, fetchShopCurrency, fetchVariantNames, isThrottled } from "../app/services/shopify-gateway.server.ts";
 
 type Handler = (query: string, variables: Record<string, unknown>) => unknown;
 
@@ -77,6 +77,32 @@ test("expands collections into unique products", async () => {
   assert.deepEqual(variants.map((v) => v.id), ["p1-v", "p2-v"]);
 });
 
+// Regression (QA PT-07): drafts and archived products in a collection must not be put on sale.
+test("collections leave out draft and archived products but keep ones picked directly", async () => {
+  const { admin, calls } = fakeAdmin((op, vars) => {
+    if (op === "PriceTideCollectionProducts") {
+      const products = [
+        { id: "p1", status: "ACTIVE" },
+        { id: "p2", status: "ARCHIVED" },
+        { id: "p3", status: "DRAFT" },
+      ];
+      return { collection: { products: { nodes: products, pageInfo: { hasNextPage: false, endCursor: null } } } };
+    }
+    return {
+      product: {
+        variants: {
+          nodes: [{ id: `${vars.id}-v`, price: "5.00", compareAtPrice: null }],
+          pageInfo: { hasNextPage: false, endCursor: null },
+        },
+      },
+    };
+  });
+  const gateway = createShopifyGateway(admin, "s", { sleep: noSleep });
+  assert.deepEqual((await gateway.listTargetVariants("COLLECTIONS", ["c1"], 100)).map((v) => v.id), ["p1-v"]);
+  assert.ok(calls.every((c) => c.op !== "PriceTideProductVariants" || c.variables.id === "p1"));
+  assert.deepEqual((await gateway.listTargetVariants("PRODUCTS", ["p2"], 100)).map((v) => v.id), ["p2-v"]);
+});
+
 test("deleted products and variants are tolerated", async () => {
   const { admin } = fakeAdmin((op) =>
     op === "PriceTideProductVariants"
@@ -141,4 +167,33 @@ test("throttled calls back off and retry; other errors surface", async () => {
 
   const alwaysThrottled = createShopifyGateway(fakeAdmin(() => throttledError()).admin, "s", { sleep: noSleep });
   await assert.rejects(alwaysThrottled.getShopCurrency(), /Throttled/);
+});
+
+// Regression (QA PT-15, PT-16): screens look up names and currency, and survive a failed lookup.
+test("variant names and shop currency are looked up, and failures are tolerated", async () => {
+  const { admin } = fakeAdmin((op) =>
+    op === "PriceTideVariantNames"
+      ? { nodes: [{ id: "v1", displayName: "Snowboard - Blue" }, null, { id: "v3" }] }
+      : { shop: { currencyCode: "EUR" } },
+  );
+  const names = await fetchVariantNames(admin, "s", ["v1", "v2", "v3"]);
+  assert.deepEqual([...names], [["v1", "Snowboard - Blue"]]);
+  assert.equal(await fetchShopCurrency(admin, "s"), "EUR");
+
+  const { admin: broken } = fakeAdmin(() => new Error("boom"));
+  assert.equal((await fetchVariantNames(broken, "s", ["v1"])).size, 0);
+  assert.equal(await fetchShopCurrency(broken, "s"), null);
+});
+
+// Regression (code review): the compare-at-only cleanup must not send a price, or it could overwrite a fresh edit.
+test("an update without a price leaves the price out of the request", async () => {
+  const { admin, calls } = fakeAdmin(() => ({ productVariantsBulkUpdate: { productVariants: [{ id: "v1" }, { id: "v2" }], userErrors: [] } }));
+  const gateway = createShopifyGateway(admin, "s", { sleep: noSleep });
+  await gateway.updateVariantPrices("p1", [
+    { id: "v1", compareAtPrice: null },
+    { id: "v2", price: "9.00", compareAtPrice: "12.00" },
+  ]);
+  const sent = calls[0].variables.variants as Record<string, unknown>[];
+  assert.equal("price" in sent[0], false);
+  assert.equal(sent[1].price, "9.00");
 });

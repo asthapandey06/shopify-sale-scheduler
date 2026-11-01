@@ -18,7 +18,8 @@ export const meta: MetaFunction = () => [
  */
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
-  if (url.searchParams.get("shop")) {
+  // Shopify opens the app with `shop` (and, when embedded, `host`); either means "show the app", not the landing page.
+  if (url.searchParams.get("shop") || url.searchParams.get("host")) {
     throw redirect(`/app?${url.searchParams.toString()}`);
   }
   return null;

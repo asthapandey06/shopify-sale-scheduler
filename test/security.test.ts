@@ -8,7 +8,7 @@ import {
   parseKeyring,
   safeEqual,
 } from "../app/lib/crypto.ts";
-import { parseSaleInput, readJsonBody, BodyTooLargeError, InvalidBodyError, cleanText } from "../app/lib/validation.ts";
+import { discountValueError, parseSaleInput, readJsonBody, BodyTooLargeError, InvalidBodyError, cleanText } from "../app/lib/validation.ts";
 import { createRateLimiter } from "../app/lib/rate-limit.ts";
 import { createLogger, redact } from "../app/lib/logger.ts";
 import { loadConfig } from "../app/lib/env.ts";
@@ -127,6 +127,34 @@ test("malicious and malformed input is rejected", () => {
   }
   assert.equal(parseSaleInput(null, NOW).ok, false);
   assert.equal(parseSaleInput("x", NOW).ok, false);
+});
+
+// Regression (QA PT-11, PT-12): each mistake gets a message that names the actual problem.
+test("validation messages name the actual problem", () => {
+  const msg = (input: Record<string, unknown>, field: string) => {
+    const r = parseSaleInput(input, NOW);
+    assert.equal(r.ok, false);
+    return r.ok ? "" : r.errors[field];
+  };
+  assert.equal(msg({ ...valid, discountValue: "0" }, "discountValue"), "Enter a percentage above 0 and up to 90");
+  assert.equal(msg({ ...valid, discountValue: "95" }, "discountValue"), "Enter a percentage above 0 and up to 90");
+  assert.equal(msg({ ...valid, discountValue: "-5" }, "discountValue"), "Enter a number above 0");
+  assert.equal(msg({ ...valid, discountValue: "12.345" }, "discountValue"), "Enter a number with up to 2 decimals");
+  assert.equal(msg({ ...valid, discountType: "FIXED_AMOUNT", discountValue: "0" }, "discountValue"), "Amount must be greater than 0");
+  assert.equal(msg({ ...valid, endsAt: valid.startsAt }, "endsAt"), "End must be after start");
+  assert.equal(msg({ ...valid, endsAt: "2026-11-01T10:00:00Z" }, "endsAt"), "End must be after start");
+  assert.equal(msg({ ...valid, endsAt: "2026-11-01T10:33:00Z" }, "endsAt"), "Sale must run for at least 5 minutes");
+});
+
+// Regression (QA PT-13): the create form uses this to stop previewing values the server rejects (e.g. 95%).
+test("discountValueError is the one rule for the form and the server", () => {
+  assert.equal(discountValueError("PERCENTAGE", "90"), null);
+  assert.notEqual(discountValueError("PERCENTAGE", "95"), null);
+  assert.notEqual(discountValueError("PERCENTAGE", "0"), null);
+  assert.equal(discountValueError("FIXED_AMOUNT", "5000"), null);
+  assert.notEqual(discountValueError("FIXED_AMOUNT", "0.00"), null);
+  assert.notEqual(discountValueError("FIXED_AMOUNT", "1e3"), null);
+  assert.equal(discountValueError(null, "95"), null, "no type chosen yet: only the shape is checked");
 });
 
 test("text is cleaned of control and bidi characters", () => {

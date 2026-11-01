@@ -14,34 +14,54 @@ import {
   restoreSale,
 } from "../services/sales.server";
 import { assertId, toErrorResponse } from "../services/http.server";
+import { createShopifyGateway, fetchShopCurrency, fetchVariantNames } from "../services/shopify-gateway.server";
+import { findLiveEdits } from "../lib/live-edits";
+import { logger } from "../lib/logger";
 import { kickScheduler } from "../services/scheduler.server";
-import { ITEM_STATUS, type ItemStatus } from "../lib/sale-types";
+import { BUSY_SKIP_MESSAGE, ITEM_STATUS, SALE_STATUS, type ItemStatus } from "../lib/sale-types";
 import { LocalTime, ROUNDING_LABEL, StatusBadge, describeDiscount, formatMoney, gidNumber } from "../components/ui";
 
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
   const id = assertId(params.id);
   const detail = await getSaleDetail(session.shop, id);
   if (!detail) throw new Response("Not found", { status: 404 });
   const { sale, statusCounts, items } = detail;
+  // Independent Shopify lookups, all failure-tolerant: run them together so the page stays quick.
+  const applied = items.filter((i) => i.status === ITEM_STATUS.APPLIED);
+  const [shopCurrency, variantNames, liveEdits] = await Promise.all([
+    sale.currencyCode ? Promise.resolve(null) : fetchShopCurrency(admin, session.shop),
+    fetchVariantNames(admin, session.shop, items.map((i) => i.variantId)),
+    // While the sale runs, flag a merchant's price edit now, not only once the sale has ended.
+    sale.status === SALE_STATUS.ACTIVE
+      ? createShopifyGateway(admin, session.shop)
+          .getVariantPrices(applied.map((i) => i.variantId))
+          .then((live) => findLiveEdits(applied, live))
+          .catch((error) => {
+            logger.warn("Live price check for the sale page failed", { shop: session.shop, saleId: id, error: error as Error });
+            return new Map<string, string>();
+          })
+      : Promise.resolve(new Map<string, string>()),
+  ]);
+  const currencyCode = sale.currencyCode ?? shopCurrency;
 
   return {
     sale: {
       id: sale.id,
       name: sale.name,
       status: sale.status,
-      discount: describeDiscount(sale.discountType, sale.discountValue, sale.currencyCode),
+      discount: describeDiscount(sale.discountType, sale.discountValue, currencyCode),
       rounding: ROUNDING_LABEL[sale.rounding] ?? sale.rounding,
       targetType: sale.targetType,
       targets: sale.targets,
       startsAt: sale.startsAt.toISOString(),
       endsAt: sale.endsAt.toISOString(),
-      currencyCode: sale.currencyCode,
+      currencyCode,
       lastError: sale.lastError,
       nextAttemptAt: sale.nextAttemptAt?.toISOString() ?? null,
     },
     statusCounts,
-    items,
+    items: items.map((item) => ({ ...item, name: variantNames.get(item.variantId) ?? null, livePrice: liveEdits.get(item.id) ?? null })),
   };
 };
 
@@ -92,6 +112,13 @@ const ITEM_LABEL: Record<ItemStatus, string> = {
 };
 
 const TRANSITIONAL = new Set(["ACTIVATING", "REVERTING"]);
+
+const CONFIRM_LABEL: Record<Intent, string> = {
+  cancel: "Yes, cancel sale",
+  end: "Yes, end sale",
+  delete: "Yes, delete",
+  restore: "Yes, restore prices",
+};
 
 export default function SaleDetail() {
   const { sale, statusCounts, items } = useLoaderData<typeof loader>();
@@ -163,13 +190,20 @@ export default function SaleDetail() {
 
       {confirming && (
         <s-banner tone="warning" heading="Please confirm">
-          <s-paragraph>{confirming.text}</s-paragraph>
-          <s-button slot="secondary-actions" variant="primary" onClick={() => act(confirming.intent)}>
-            Yes, continue
-          </s-button>
-          <s-button slot="secondary-actions" onClick={() => setConfirming(null)}>
-            Keep it
-          </s-button>
+          <s-stack gap="small-200">
+            <s-paragraph>{confirming.text}</s-paragraph>
+            <s-stack direction="inline" gap="small-200">
+              <s-button
+                variant="primary"
+                tone={confirming.intent === "end" ? undefined : "critical"}
+                disabled={busy || undefined}
+                onClick={() => act(confirming.intent)}
+              >
+                {CONFIRM_LABEL[confirming.intent]}
+              </s-button>
+              <s-button onClick={() => setConfirming(null)}>Keep it</s-button>
+            </s-stack>
+          </s-stack>
         </s-banner>
       )}
 
@@ -223,16 +257,27 @@ export default function SaleDetail() {
                 <s-table-row key={item.id}>
                   <s-table-cell>
                     <s-link href={`shopify://admin/products/${gidNumber(item.productId)}/variants/${gidNumber(item.variantId)}`} target="_top">
-                      #{gidNumber(item.variantId)}
+                      {item.name ?? `#${gidNumber(item.variantId)}`}
                     </s-link>
                   </s-table-cell>
-                  <s-table-cell>{formatMoney(item.originalPrice, sale.currencyCode)}</s-table-cell>
+                  <s-table-cell>
+                    {item.status === ITEM_STATUS.SKIPPED && item.message === BUSY_SKIP_MESSAGE
+                      ? "—"
+                      : formatMoney(item.originalPrice, sale.currencyCode)}
+                  </s-table-cell>
                   <s-table-cell>
                     {item.status === "SKIPPED" ? "—" : formatMoney(item.salePrice, sale.currencyCode)}
                   </s-table-cell>
                   <s-table-cell>
-                    {ITEM_LABEL[item.status as ItemStatus] ?? item.status}
-                    {item.message ? <s-text color="subdued"> · {item.message}</s-text> : null}
+                    {item.livePrice !== null ? "Edited during sale" : (ITEM_LABEL[item.status as ItemStatus] ?? item.status)}
+                    {item.livePrice !== null ? (
+                      <s-text color="subdued">
+                        {" "}
+                        · Price is now {formatMoney(item.livePrice, sale.currencyCode)}; it will be left as you set it when the sale ends
+                      </s-text>
+                    ) : item.message ? (
+                      <s-text color="subdued"> · {item.message}</s-text>
+                    ) : null}
                   </s-table-cell>
                 </s-table-row>
               ))}

@@ -35,6 +35,12 @@ export const ITEM_STATUS = {
 } as const;
 export type ItemStatus = (typeof ITEM_STATUS)[keyof typeof ITEM_STATUS];
 
+/**
+ * Message of an item skipped because another sale already holds the variant. Its recorded "original" is the live
+ * price at that moment (the other sale's price), so screens must not present it as the variant's original price.
+ */
+export const BUSY_SKIP_MESSAGE = "Already discounted by another sale (running, or failed and waiting to be restored)";
+
 export interface SaleRecord {
   id: string;
   shop: string;
@@ -116,7 +122,8 @@ export interface VariantPrice {
 
 export interface VariantUpdate {
   id: string;
-  price: string;
+  /** Omit to leave the variant's current price untouched (used to clean up only the compare-at price). */
+  price?: string;
   compareAtPrice: string | null;
 }
 

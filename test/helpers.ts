@@ -52,7 +52,7 @@ export function createFakeStore(currency = "USD") {
         } else if (failVariants.has(u.id)) {
           result.failed.push({ id: u.id, message: "Price is invalid (simulated)" });
         } else {
-          v.price = u.price;
+          if (u.price !== undefined) v.price = u.price;
           v.compareAtPrice = u.compareAtPrice;
           result.updated.push(u.id);
         }

@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createSaleEngine, type EngineDeps } from "../app/lib/sale-engine.ts";
 import { createMemoryRepo } from "../app/lib/memory-repo.ts";
-import type { SaleRecord } from "../app/lib/sale-types.ts";
+import { BUSY_SKIP_MESSAGE, type SaleRecord } from "../app/lib/sale-types.ts";
 import { clock, createFakeStore, silentLogger } from "./helpers.ts";
 
 const SHOP = "demo.myshopify.com";
@@ -92,6 +92,48 @@ test("a price edited by the merchant during the sale is left alone", async () =>
   const conflict = [...mem.items.values()].find((i) => i.variantId.endsWith("/11"))!;
   assert.equal(conflict.status, "CONFLICT");
   assert.equal(mem.sales.get("sale_1")!.status, "COMPLETED");
+});
+
+// Regression (QA PT-03): the "was" price the app added must not outlive the sale on an edited variant.
+test("a merchant-edited price keeps its value but loses the compare-at price the sale added", async () => {
+  const { mem, store, time, engine, addSale, price } = setup();
+  addSale();
+  await engine.tick();
+  assert.deepEqual([price("11").price, price("11").compareAtPrice], ["80.00", "100.00"]);
+  store.variants.get("gid://shopify/ProductVariant/11")!.price = "75.00"; // merchant edit
+  time.set("2026-11-01T12:00:00Z");
+  await engine.tick();
+  assert.deepEqual([price("11").price, price("11").compareAtPrice], ["75.00", null]);
+  const item = [...mem.items.values()].find((i) => i.variantId.endsWith("/11"))!;
+  assert.equal(item.status, "CONFLICT");
+  assert.equal(mem.sales.get("sale_1")!.status, "COMPLETED");
+});
+
+test("a compare-at price the merchant changed during the sale is left alone", async () => {
+  const { store, time, engine, addSale, price } = setup();
+  addSale();
+  await engine.tick();
+  const live = store.variants.get("gid://shopify/ProductVariant/11")!;
+  live.price = "75.00";
+  live.compareAtPrice = "130.00"; // merchant set their own "was" price
+  time.set("2026-11-01T12:00:00Z");
+  await engine.tick();
+  assert.deepEqual([price("11").price, price("11").compareAtPrice], ["75.00", "130.00"]);
+});
+
+test("a failed compare-at cleanup is retried instead of being forgotten", async () => {
+  const { mem, store, time, engine, addSale, price } = setup();
+  addSale();
+  await engine.tick();
+  store.variants.get("gid://shopify/ProductVariant/11")!.price = "75.00";
+  time.set("2026-11-01T12:00:00Z");
+  store.failUpdates(1);
+  await engine.tick();
+  assert.notEqual(mem.sales.get("sale_1")!.status, "COMPLETED");
+  time.set("2026-11-01T13:00:00Z");
+  await engine.tick();
+  assert.equal(mem.sales.get("sale_1")!.status, "COMPLETED");
+  assert.deepEqual([price("11").price, price("11").compareAtPrice], ["75.00", null]);
 });
 
 test("transient Shopify errors retry with backoff, then succeed", async () => {
@@ -272,7 +314,7 @@ test("variants still discounted by a failed sale are not stacked by a new sale",
   await engine.tick();
   assert.equal(price("11").price, "80.00", "not 64.00");
   const s2Items = [...mem.items.values()].filter((i) => i.saleId === "sale_2");
-  assert.ok(s2Items.every((i) => i.status === "SKIPPED" && /Already discounted by another sale/.test(i.message ?? "")));
+  assert.ok(s2Items.every((i) => i.status === "SKIPPED" && i.message === BUSY_SKIP_MESSAGE));
 });
 
 test("a crash after restoring but before bookkeeping is recorded as reverted, not a conflict", async () => {

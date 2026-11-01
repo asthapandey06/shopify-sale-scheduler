@@ -4,9 +4,9 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 import { AppProvider } from "@shopify/shopify-app-react-router/react";
 
 import { authenticate } from "../shopify.server";
-import { config, PLAN } from "../config.server";
+import { config } from "../config.server";
 import { ensureShop } from "../services/sale-repo.server";
-import { isTestBillingShop, setBillingStatus } from "../services/sales.server";
+import { checkPlan } from "../services/plan-check.server";
 import { logger } from "../lib/logger";
 import { ErrorPage } from "../components/error-page";
 
@@ -16,8 +16,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   // Keep the stored plan status in sync; the background worker relies on it.
   try {
-    const check = await billing.check({ plans: [PLAN], isTest: await isTestBillingShop(session.shop) });
-    await setBillingStatus(session.shop, check.hasActivePayment, check.appSubscriptions[0]?.name ?? null);
+    await checkPlan(billing, session.shop);
   } catch (error) {
     if (error instanceof Response) throw error;
     logger.warn("Billing check failed", { shop: session.shop, error: error as Error });

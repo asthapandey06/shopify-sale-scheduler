@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { computeSalePrice, type PriceInput } from "../app/lib/pricing.ts";
+import { computeSalePrice, fixedDiscountExceedsPrice, type PriceInput } from "../app/lib/pricing.ts";
 import { formatDecimal, moneyEquals, parseDecimal } from "../app/lib/money.ts";
 
 const base: PriceInput = {
@@ -107,4 +107,14 @@ test("bad inputs are rejected, never thrown", () => {
   assert.equal(computeSalePrice({ ...base, price: "oops" }).ok, false);
   assert.equal(computeSalePrice({ ...base, discountValue: "100" }).ok, false);
   assert.equal(computeSalePrice({ ...base, discountValue: "0" }).ok, false);
+});
+
+// Regression (QA PT-02): a fixed amount above the product price used to be accepted without any warning.
+test("fixedDiscountExceedsPrice flags fixed amounts that would skip a variant", () => {
+  assert.equal(fixedDiscountExceedsPrice("FIXED_AMOUNT", "5000", "25.00"), true);
+  assert.equal(fixedDiscountExceedsPrice("FIXED_AMOUNT", "25", "25.00"), true);
+  assert.equal(fixedDiscountExceedsPrice("FIXED_AMOUNT", "24.99", "25.00"), false);
+  assert.equal(fixedDiscountExceedsPrice("PERCENTAGE", "90", "25.00"), false);
+  assert.equal(fixedDiscountExceedsPrice("FIXED_AMOUNT", "abc", "25.00"), false);
+  assert.equal(fixedDiscountExceedsPrice("FIXED_AMOUNT", "5", "not a price"), false);
 });

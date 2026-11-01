@@ -5,6 +5,7 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import { config, PLAN } from "../config.server";
+import { checkPlan, invalidatePlanCheck } from "../services/plan-check.server";
 import {
   HttpError,
   audit,
@@ -26,9 +27,8 @@ import { logger } from "../lib/logger";
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, billing, admin } = await authenticate.admin(request);
   const isTest = config.billing.testMode || (await refreshDevStoreFlag(admin, session.shop));
-  const check = await billing.check({ plans: [PLAN], isTest });
+  const check = await checkPlan(billing, session.shop, { isTest });
   const subscription = check.appSubscriptions[0];
-  await setBillingStatus(session.shop, check.hasActivePayment, subscription?.name ?? null);
 
   return {
     hasPlan: check.hasActivePayment,
@@ -61,8 +61,10 @@ async function requestPlan(billing: { request: (options: { plan: string; isTest:
 }
 
 export const action = async ({ request }: ActionFunctionArgs) => {
+  let shop: string | undefined;
   try {
     const { session, billing } = await authenticate.admin(request);
+    shop = session.shop;
     enforceRateLimit(session.shop);
     const form = await request.formData();
     const intent = form.get("intent");
@@ -85,10 +87,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
       await setBillingStatus(session.shop, false, null);
       await audit(session.shop, null, "billing.cancelled");
-      return data({ ok: true as const, message: "Subscription cancelled" });
+      return data({ ok: true as const, message: "Subscription cancelled", planCancelled: true as const });
     }
 
     if (intent === "pause") {
+      // A shop that never had a plan has nothing to pause; allowing it would skip the plan page (App Store 1.2.2).
+      if (!(await isShopPaused(session.shop)) && !(await billing.check({ plans: [PLAN], isTest })).hasActivePayment) {
+        if ((await countRunningSales(session.shop)) === 0) throw new HttpError(409, "There is no plan to pause.");
+      }
       // Ends running sales (prices restored by the scheduler) and holds scheduled ones, then stops billing.
       const { endedSales } = await pauseShop(session.shop);
       try {
@@ -106,6 +112,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return data({
         ok: true as const,
         message: endedSales > 0 ? "PriceTide paused. Restoring prices of running sales…" : "PriceTide paused",
+        planCancelled: true as const,
       });
     }
 
@@ -130,12 +137,21 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     throw new HttpError(400, "Unknown action.");
   } catch (error) {
     return toErrorResponse(error, { route: "billing" });
+  } finally {
+    // The plan may have changed (or the merchant is about to approve one); never serve a cached check.
+    if (shop) invalidatePlanCheck(shop);
   }
 };
 
 export default function Billing() {
-  const { hasPlan, paused, subscription, plan, isTest } = useLoaderData<typeof loader>();
+  const loaded = useLoaderData<typeof loader>();
   const fetcher = useFetcher<typeof action>();
+  // Shopify can still list a just-cancelled subscription when the page reloads after Pause or Cancel, so
+  // trust the action's own result until the merchant does something else. A reload shows Shopify's truth.
+  const planJustCancelled = Boolean(fetcher.data && "planCancelled" in fetcher.data && fetcher.data.planCancelled);
+  const { paused, plan, isTest } = loaded;
+  const hasPlan = loaded.hasPlan && !planJustCancelled;
+  const subscription = planJustCancelled ? null : loaded.subscription;
   const shopify = useAppBridge();
   const busy = fetcher.state !== "idle";
   const [confirmCancel, setConfirmCancel] = useState(false);

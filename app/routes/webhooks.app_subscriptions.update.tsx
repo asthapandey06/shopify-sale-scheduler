@@ -3,6 +3,7 @@ import { authenticate } from "../shopify.server";
 import { logger } from "../lib/logger";
 import { PLAN } from "../config.server";
 import { applySubscriptionUpdate } from "../services/sales.server";
+import { invalidatePlanCheck } from "../services/plan-check.server";
 
 /**
  * HMAC-verified by authenticate.webhook. Keeps the stored plan status current; the payload is only a
@@ -11,6 +12,7 @@ import { applySubscriptionUpdate } from "../services/sales.server";
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { shop, topic, webhookId, payload } = await authenticate.webhook(request);
   const status = await applySubscriptionUpdate(shop, payload, PLAN);
+  invalidatePlanCheck(shop);
   logger.info("Webhook received", { topic, shop, webhookId, status });
   return new Response();
 };

@@ -1,25 +1,22 @@
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs } from "react-router";
 import { data, useActionData, useLoaderData, useNavigation, useSubmit } from "react-router";
-import { useAppBridge } from "@shopify/app-bridge-react";
+import { SaveBar, useAppBridge } from "@shopify/app-bridge-react";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
-import { PLAN } from "../config.server";
-import { computeSalePrice, type DiscountType, type Rounding } from "../lib/pricing";
-import { LIMITS, parseSaleInput, readJsonBody, type TargetType } from "../lib/validation";
-import { createSale, enforceRateLimit, isTestBillingShop } from "../services/sales.server";
+import { computeSalePrice, fixedDiscountExceedsPrice, type DiscountType, type Rounding } from "../lib/pricing";
+import { addLocalDays, defaultEndFor, toLocalInput } from "../lib/local-datetime";
+import { parseDecimal } from "../lib/money";
+import { LIMITS, discountValueError, parseSaleInput, readJsonBody, type TargetType } from "../lib/validation";
+import { createSale, enforceRateLimit } from "../services/sales.server";
+import { checkPlan } from "../services/plan-check.server";
 import { toErrorResponse, type ActionFailure } from "../services/http.server";
 import { kickScheduler } from "../services/scheduler.server";
 import { ROUNDING_LABEL, formatMoney, subscribeNever } from "../components/ui";
 
-async function requirePlan(request: Request) {
+async function requirePlan(request: Request, options: { fresh?: boolean } = {}) {
   const context = await authenticate.admin(request);
-  const isTest = await isTestBillingShop(context.session.shop);
-  await context.billing.require({
-    plans: [PLAN],
-    isTest,
-    onFailure: async () => context.redirect("/app/billing"),
-  });
+  if (!(await checkPlan(context.billing, context.session.shop, options)).hasActivePayment) throw context.redirect("/app/billing");
   return context;
 }
 
@@ -35,7 +32,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   try {
-    const { session, redirect } = await requirePlan(request);
+    const { session, redirect } = await requirePlan(request, { fresh: true });
     enforceRateLimit(session.shop);
 
     const parsed = parseSaleInput(await readJsonBody(request), new Date());
@@ -54,12 +51,29 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 type Picked = {
   id: string;
   title: string;
+  /** Lowest variant price from the picker (products only); used for the "discount too large" warning. */
+  minPrice?: string;
+  /** Product count of a collection, when the picker reports it. */
+  productsCount?: number;
 };
 
-function toLocalInput(date: Date): string {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+function collectionProductCount(resource: unknown): number | undefined {
+  const raw = (resource as { productsCount?: number | { count?: number } }).productsCount;
+  const count = typeof raw === "number" ? raw : raw?.count;
+  return typeof count === "number" ? count : undefined;
 }
+
+function lowestVariantPrice(resource: unknown): string | undefined {
+  const variants = (resource as { variants?: { price?: string }[] }).variants;
+  const prices = (variants ?? []).map((v) => v.price).filter((p): p is string => typeof p === "string");
+  const parsed = prices.flatMap((p) => {
+    const n = parseDecimal(p);
+    return n === null ? [] : [{ p, n }];
+  });
+  return parsed.length > 0 ? parsed.reduce((a, b) => (b.n < a.n ? b : a)).p : undefined;
+}
+
+const DEFAULT_DAYS = 2;
 
 type DefaultTimes = { startsAt: string; endsAt: string };
 
@@ -73,7 +87,7 @@ function getDefaultTimes(): DefaultTimes {
   start.setHours(start.getHours() + 1);
   const startsAt = toLocalInput(start);
   if (cachedDefaultTimes.startsAt !== startsAt) {
-    cachedDefaultTimes = { startsAt, endsAt: toLocalInput(new Date(start.getTime() + 2 * 86_400_000)) };
+    cachedDefaultTimes = { startsAt, endsAt: toLocalInput(addLocalDays(start, DEFAULT_DAYS)) };
   }
   return cachedDefaultTimes;
 }
@@ -92,6 +106,7 @@ const inputStyle = {
   width: "100%",
   boxSizing: "border-box" as const,
 };
+const inputErrorStyle = { ...inputStyle, border: "1px solid var(--s-color-border-critical, #e51c00)" };
 
 export default function NewSale() {
   const { currencyCode } = useLoaderData<typeof loader>();
@@ -115,19 +130,43 @@ export default function NewSale() {
   const [startsAtInput, setStartsAt] = useState<string | null>(null);
   const [endsAtInput, setEndsAt] = useState<string | null>(null);
   const startsAt = startsAtInput ?? defaults.startsAt;
-  const endsAt = endsAtInput ?? defaults.endsAt;
+  // Until the merchant sets an end, it follows the start (same time of day, two days later).
+  const endsAt = endsAtInput ?? (startsAtInput !== null ? (defaultEndFor(startsAtInput, DEFAULT_DAYS) ?? defaults.endsAt) : defaults.endsAt);
+
+  // Server errors disappear once the merchant touches the field again, until the next failed submit.
+  const [edited, setEdited] = useState<Record<string, unknown>>({});
+  const touch = (field: string) => setEdited((current) => ({ ...current, [field]: actionData ?? null }));
+  const errorFor = (field: string): string | undefined => (actionData && edited[field] === actionData ? undefined : errors[field]);
+
+  // The default start is "the next full hour": keep it current while the form stays open and is untouched.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (startsAtInput !== null || startNow) return;
+    const timer = setInterval(() => setTick((n) => n + 1), 30_000);
+    return () => clearInterval(timer);
+  }, [startsAtInput, startNow]);
+
+  const trimmedValue = discountValue.trim();
+  const valueError = trimmedValue === "" ? null : discountValueError(discountType, trimmedValue);
 
   const example = useMemo(() => {
+    if (trimmedValue === "" || discountValueError(discountType, trimmedValue)) return null;
     const result = computeSalePrice({
       price: "100.00",
       compareAtPrice: null,
       discountType,
-      discountValue: discountValue.trim(),
+      discountValue: trimmedValue,
       rounding,
       currencyCode,
     });
     return result.ok ? `${formatMoney("100.00", currencyCode)} → ${formatMoney(result.salePrice, currencyCode)}` : null;
-  }, [discountType, discountValue, rounding, currencyCode]);
+  }, [discountType, trimmedValue, rounding, currencyCode]);
+
+  // Variants priced at or below a fixed discount are skipped at start; tell the merchant now.
+  const tooCheap = useMemo(
+    () => targets.filter((t) => t.minPrice !== undefined && fixedDiscountExceedsPrice(discountType, discountValue, t.minPrice)),
+    [targets, discountType, discountValue],
+  );
 
   const pick = async () => {
     const selected = await shopify.resourcePicker({
@@ -137,11 +176,44 @@ export default function NewSale() {
       ...(targetType === "PRODUCTS" ? { filter: { variants: false } } : {}),
     });
     if (selected) {
-      setTargets(selected.map((r) => ({ id: r.id, title: (r as { title?: string }).title ?? r.id })));
+      touch("targets");
+      setTargets(
+        selected.map((r) => ({
+          id: r.id,
+          title: (r as { title?: string }).title ?? r.id,
+          ...(targetType === "PRODUCTS" ? { minPrice: lowestVariantPrice(r) } : { productsCount: collectionProductCount(r) }),
+        })),
+      );
     }
   };
 
+  const dirty =
+    name.trim() !== "" ||
+    targets.length > 0 ||
+    discountType !== "PERCENTAGE" ||
+    targetType !== "PRODUCTS" ||
+    discountValue !== "20" ||
+    rounding !== "NONE" ||
+    startNow ||
+    startsAtInput !== null ||
+    endsAtInput !== null;
+
+  const discard = () => {
+    setName("");
+    setDiscountType("PERCENTAGE");
+    setDiscountValue("20");
+    setRounding("NONE");
+    setTargetType("PRODUCTS");
+    setTargets([]);
+    setStartNow(false);
+    setStartsAt(null);
+    setEndsAt(null);
+    setEdited({});
+  };
+
   const onSubmit = () => {
+    // The save bar button calls this too: ignore double clicks and values the form already flags.
+    if (submitting || valueError) return;
     submit(
       {
         name,
@@ -149,7 +221,7 @@ export default function NewSale() {
         discountValue: discountValue.trim(),
         rounding,
         targetType,
-        targets,
+        targets: targets.map(({ id, title }) => ({ id, title })),
         startsAt: startNow ? new Date().toISOString() : localInputToIso(startsAt),
         endsAt: localInputToIso(endsAt),
       },
@@ -158,7 +230,14 @@ export default function NewSale() {
   };
 
   useEffect(() => {
-    if (actionData && !actionData.ok) shopify.toast.show(actionData.message, { isError: true });
+    if (!actionData || actionData.ok) return;
+    shopify.toast.show(actionData.message, { isError: true });
+    // The toast is easy to miss when the broken field is off screen: bring the first one into view.
+    if ("errors" in actionData) {
+      requestAnimationFrame(() =>
+        document.querySelector('[data-has-error="true"]')?.scrollIntoView({ behavior: "smooth", block: "center" }),
+      );
+    }
   }, [actionData, shopify]);
 
   return (
@@ -167,6 +246,14 @@ export default function NewSale() {
         Schedule sale
       </s-button>
 
+      {/* Contextual save bar: signals unsaved input and asks before the merchant navigates away. */}
+      <SaveBar id="new-sale-save-bar" open={dirty && !submitting} discardConfirmation>
+        <button {...{ variant: "primary" }} onClick={onSubmit}>
+          Schedule sale
+        </button>
+        <button onClick={discard}>Discard</button>
+      </SaveBar>
+
       <s-section heading="Details">
         <s-stack gap="base">
           <s-text-field
@@ -174,15 +261,23 @@ export default function NewSale() {
             details="Only you see this, e.g. “Black Friday 2026”."
             value={name}
             maxLength={100}
-            error={errors.name}
-            onChange={(e) => setName(e.currentTarget.value)}
+            error={errorFor("name")}
+            data-has-error={errorFor("name") ? "true" : undefined}
+            onChange={(e) => {
+              touch("name");
+              setName(e.currentTarget.value);
+            }}
           ></s-text-field>
 
           <s-select
             label="Discount type"
             value={discountType}
-            error={errors.discountType}
-            onChange={(e) => setDiscountType(e.currentTarget.value as DiscountType)}
+            error={errorFor("discountType")}
+            data-has-error={errorFor("discountType") ? "true" : undefined}
+            onChange={(e) => {
+              touch("discountType");
+              setDiscountType(e.currentTarget.value as DiscountType);
+            }}
           >
             <s-option value="PERCENTAGE">Percentage off</s-option>
             <s-option value="FIXED_AMOUNT">Fixed amount off</s-option>
@@ -191,16 +286,24 @@ export default function NewSale() {
           <s-text-field
             label={discountType === "PERCENTAGE" ? "Percent off" : `Amount off (${currencyCode})`}
             value={discountValue}
-            error={errors.discountValue}
+            error={valueError ?? errorFor("discountValue")}
+            data-has-error={valueError ?? errorFor("discountValue") ? "true" : undefined}
             details={discountType === "PERCENTAGE" ? `Up to ${LIMITS.maxPercent}%.` : "Taken off each variant's price."}
-            onChange={(e) => setDiscountValue(e.currentTarget.value)}
+            onChange={(e) => {
+              touch("discountValue");
+              setDiscountValue(e.currentTarget.value);
+            }}
           ></s-text-field>
 
           <s-select
             label="Price rounding"
             value={rounding}
-            error={errors.rounding}
-            onChange={(e) => setRounding(e.currentTarget.value as Rounding)}
+            error={errorFor("rounding")}
+            data-has-error={errorFor("rounding") ? "true" : undefined}
+            onChange={(e) => {
+              touch("rounding");
+              setRounding(e.currentTarget.value as Rounding);
+            }}
           >
             {Object.entries(ROUNDING_LABEL).map(([value, label]) => (
               <s-option key={value} value={value}>
@@ -231,18 +334,39 @@ export default function NewSale() {
             {targets.length > 0 ? "Change selection" : targetType === "PRODUCTS" ? "Select products" : "Select collections"}
           </s-button>
 
-          {errors.targets && <s-text tone="critical">{errors.targets}</s-text>}
+          {errorFor("targets") && (
+            <s-text tone="critical" data-has-error="true">
+              {errorFor("targets")}
+            </s-text>
+          )}
 
           {targets.length > 0 && (
             <s-unordered-list>
               {targets.slice(0, 10).map((t) => (
-                <s-list-item key={t.id}>{t.title}</s-list-item>
+                <s-list-item key={t.id}>
+                  {t.title}
+                  {t.productsCount !== undefined ? ` (${t.productsCount} ${t.productsCount === 1 ? "product" : "products"})` : ""}
+                </s-list-item>
               ))}
               {targets.length > 10 && <s-list-item>…and {targets.length - 10} more</s-list-item>}
             </s-unordered-list>
           )}
+          {tooCheap.length > 0 && (
+            <s-banner tone="warning" heading="Discount is larger than some prices">
+              <s-paragraph>
+                {discountValue.trim()} {currencyCode} off is at least the price of{" "}
+                {tooCheap
+                  .slice(0, 3)
+                  .map((t) => t.title)
+                  .join(", ")}
+                {tooCheap.length > 3 ? ` and ${tooCheap.length - 3} more` : ""}. Those variants will be skipped, and
+                their prices won&apos;t change.
+              </s-paragraph>
+            </s-banner>
+          )}
           <s-text color="subdued">
-            Every variant gets the discount. Variants already in another running sale are skipped.
+            Every variant gets the discount. Variants already in another running sale are skipped
+            {targetType === "COLLECTIONS" ? ", and draft or archived products in a collection are left out." : "."}
           </s-text>
         </s-stack>
       </s-section>
@@ -260,12 +384,20 @@ export default function NewSale() {
               <s-text>Starts</s-text>
               <input
                 type="datetime-local"
-                style={inputStyle}
+                style={errorFor("startsAt") ? inputErrorStyle : inputStyle}
                 value={startsAt}
-                onChange={(e) => setStartsAt(e.currentTarget.value)}
-                aria-invalid={Boolean(errors.startsAt)}
+                onChange={(e) => {
+                  touch("startsAt");
+                  touch("endsAt");
+                  setStartsAt(e.currentTarget.value);
+                }}
+                aria-invalid={Boolean(errorFor("startsAt"))}
               />
-              {errors.startsAt && <s-text tone="critical">{errors.startsAt}</s-text>}
+              {errorFor("startsAt") && (
+                <s-text tone="critical" data-has-error="true">
+                  {errorFor("startsAt")}
+                </s-text>
+              )}
             </label>
           )}
 
@@ -273,12 +405,19 @@ export default function NewSale() {
             <s-text>Ends</s-text>
             <input
               type="datetime-local"
-              style={inputStyle}
+              style={errorFor("endsAt") ? inputErrorStyle : inputStyle}
               value={endsAt}
-              onChange={(e) => setEndsAt(e.currentTarget.value)}
-              aria-invalid={Boolean(errors.endsAt)}
+              onChange={(e) => {
+                touch("endsAt");
+                setEndsAt(e.currentTarget.value);
+              }}
+              aria-invalid={Boolean(errorFor("endsAt"))}
             />
-            {errors.endsAt && <s-text tone="critical">{errors.endsAt}</s-text>}
+            {errorFor("endsAt") && (
+              <s-text tone="critical" data-has-error="true">
+                {errorFor("endsAt")}
+              </s-text>
+            )}
           </label>
 
           <s-text color="subdued">Times are in your computer&apos;s time zone.</s-text>

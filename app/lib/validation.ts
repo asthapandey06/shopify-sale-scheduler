@@ -76,6 +76,23 @@ function parseDate(value: unknown): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
+/**
+ * The message for an invalid discount value, or null when it is fine. `type` null (not chosen yet) only checks the
+ * number's shape. Shared by the server and the create form, so the form can't preview a value the server rejects.
+ */
+export function discountValueError(type: DiscountType | null, rawValue: string): string | null {
+  if (!/^\d{1,9}(\.\d{1,2})?$/.test(rawValue)) {
+    return rawValue.startsWith("-") ? "Enter a number above 0" : "Enter a number with up to 2 decimals";
+  }
+  const n = Number(rawValue);
+  if (type === "PERCENTAGE" && (n <= 0 || n > LIMITS.maxPercent)) {
+    return `Enter a percentage above 0 and up to ${LIMITS.maxPercent}`;
+  }
+  if (type === "FIXED_AMOUNT" && n <= 0) return "Amount must be greater than 0";
+  if (type === "FIXED_AMOUNT" && n > LIMITS.maxFixedAmount) return `Amount can be at most ${LIMITS.maxFixedAmount}`;
+  return null;
+}
+
 export function parseSaleInput(raw: unknown, now: Date): ValidationResult<SaleInput> {
   const errors: Record<string, string> = {};
   const body = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
@@ -91,18 +108,9 @@ export function parseSaleInput(raw: unknown, now: Date): ValidationResult<SaleIn
 
   const rawValue = typeof body.discountValue === "string" ? body.discountValue.trim() : String(body.discountValue ?? "");
   let discountValue = "";
-  if (!/^\d{1,9}(\.\d{1,2})?$/.test(rawValue)) {
-    errors.discountValue = "Enter a number with up to 2 decimals";
-  } else {
-    const n = Number(rawValue);
-    if (discountType === "PERCENTAGE" && (n <= 0 || n > LIMITS.maxPercent)) {
-      errors.discountValue = `Percentage must be between 0 and ${LIMITS.maxPercent}`;
-    } else if (discountType === "FIXED_AMOUNT" && (n <= 0 || n > LIMITS.maxFixedAmount)) {
-      errors.discountValue = "Amount must be greater than 0";
-    } else {
-      discountValue = rawValue;
-    }
-  }
+  const valueError = discountValueError(isOneOf(DISCOUNT_TYPES, discountType) ? discountType : null, rawValue);
+  if (valueError) errors.discountValue = valueError;
+  else discountValue = rawValue;
 
   const targetType = body.targetType;
   const targets: SaleTarget[] = [];
@@ -138,7 +146,8 @@ export function parseSaleInput(raw: unknown, now: Date): ValidationResult<SaleIn
     if (startsAt.getTime() < nowMs - LIMITS.startGraceMs) errors.startsAt = "Start time is in the past";
     else if (startsAt.getTime() > nowMs + LIMITS.maxScheduleAheadDays * 86_400_000) errors.startsAt = "Start must be within a year";
     const duration = endsAt.getTime() - startsAt.getTime();
-    if (duration < LIMITS.minDurationMs) errors.endsAt = "Sale must run for at least 5 minutes";
+    if (duration <= 0) errors.endsAt = "End must be after start";
+    else if (duration < LIMITS.minDurationMs) errors.endsAt = "Sale must run for at least 5 minutes";
     else if (duration > LIMITS.maxDurationDays * 86_400_000) errors.endsAt = `Sale can run for at most ${LIMITS.maxDurationDays} days`;
   }
 

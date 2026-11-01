@@ -6,6 +6,7 @@ import {
   LeaseLostError,
   PermanentError,
   SALE_STATUS,
+  BUSY_SKIP_MESSAGE,
   type AdminGateway,
   type ItemStatus,
   type NewSaleItem,
@@ -128,7 +129,7 @@ export function createSaleEngine(deps: EngineDeps) {
         originalCompareAtPrice: variant.compareAtPrice,
       };
       if (busy.has(variant.id)) {
-        return { ...base, salePrice: variant.price, saleCompareAtPrice: variant.compareAtPrice, status: ITEM_STATUS.SKIPPED, message: "Already discounted by another sale (running, or failed and waiting to be restored)" };
+        return { ...base, salePrice: variant.price, saleCompareAtPrice: variant.compareAtPrice, status: ITEM_STATUS.SKIPPED, message: BUSY_SKIP_MESSAGE };
       }
       const result = computeSalePrice({
         price: variant.price,
@@ -357,6 +358,8 @@ export function createSaleEngine(deps: EngineDeps) {
       for (const part of chunk(items, batchSize)) {
         const live = await gateway.getVariantPrices(part.map((i) => i.variantId));
         const toRestore: SaleItemRecord[] = [];
+        // Edited variants whose "was" price is still the one this sale added: only that price is cleaned up.
+        const compareAtCleanup = new Map<string, { item: SaleItemRecord; livePrice: string }>();
         const statusUpdates: { id: string; status: ItemStatus; message: string | null }[] = [];
 
         for (const item of part) {
@@ -373,6 +376,12 @@ export function createSaleEngine(deps: EngineDeps) {
           ) {
             // Already restored (e.g. a crash after the restore but before this status was saved).
             statusUpdates.push({ id: item.id, status: ITEM_STATUS.REVERTED, message: null });
+          } else if (
+            item.status === ITEM_STATUS.APPLIED &&
+            sameCompareAt(current.compareAtPrice, item.saleCompareAtPrice) &&
+            !sameCompareAt(item.saleCompareAtPrice, item.originalCompareAtPrice)
+          ) {
+            compareAtCleanup.set(item.variantId, { item, livePrice: current.price });
           } else {
             statusUpdates.push({
               id: item.id,
@@ -383,6 +392,37 @@ export function createSaleEngine(deps: EngineDeps) {
         }
         await repo.setItemStatuses(statusUpdates);
         conflicts += statusUpdates.filter((u) => u.status === ITEM_STATUS.CONFLICT).length;
+
+        // Only the compare-at price the sale added goes; `price` is left out of the update, so Shopify keeps
+        // whatever the merchant has set, even if they edit it again right now. A failed write leaves the item
+        // APPLIED, so the next pass retries it.
+        for (const [productId, cleanup] of groupByProduct([...compareAtCleanup.values()].map((c) => c.item))) {
+          await renew(sale.shop);
+          const result = await gateway.updateVariantPrices(
+            productId,
+            cleanup.map((item) => ({
+              id: item.variantId,
+              compareAtPrice: item.originalCompareAtPrice,
+            })),
+          );
+          const byVariant = new Map(cleanup.map((item) => [item.variantId, item]));
+          await repo.setItemStatuses(
+            result.updated.flatMap((variantId) => {
+              const item = byVariant.get(variantId);
+              return item
+                ? [
+                    {
+                      id: item.id,
+                      status: ITEM_STATUS.CONFLICT,
+                      message: `Price was edited during the sale (now ${compareAtCleanup.get(variantId)!.livePrice}); kept. The sale's "was" price was removed`,
+                    },
+                  ]
+                : [];
+            }),
+          );
+          conflicts += result.updated.length;
+          stillApplied += cleanup.length - result.updated.length;
+        }
 
         // Failed restores stay APPLIED so the next attempt retries them.
         const { succeeded, failed } = await writePrices(

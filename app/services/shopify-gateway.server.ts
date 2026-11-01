@@ -90,7 +90,7 @@ export function createShopifyGateway(
     do {
       const data: {
         collection: {
-          products: { pageInfo: { hasNextPage: boolean; endCursor: string | null }; nodes: { id: string }[] };
+          products: { pageInfo: { hasNextPage: boolean; endCursor: string | null }; nodes: { id: string; status?: string }[] };
         } | null;
       } = await query(
         `#graphql
@@ -98,14 +98,17 @@ export function createShopifyGateway(
           collection(id: $id) {
             products(first: ${PRODUCT_PAGE}, after: $after) {
               pageInfo { hasNextPage endCursor }
-              nodes { id }
+              nodes { id status }
             }
           }
         }`,
         { id: collectionId, after },
       );
       if (!data.collection) return;
-      for (const p of data.collection.products.nodes) out.add(p.id);
+      // Drafts and archived products aren't for sale, so a collection sale leaves them alone.
+      for (const p of data.collection.products.nodes) {
+        if (p.status !== "DRAFT" && p.status !== "ARCHIVED") out.add(p.id);
+      }
       if (out.size > cap) return;
       after = data.collection.products.pageInfo.hasNextPage ? data.collection.products.pageInfo.endCursor : null;
     } while (after);
@@ -182,7 +185,12 @@ export function createShopifyGateway(
         }`,
         {
           productId,
-          variants: updates.map((u) => ({ id: u.id, price: u.price, compareAtPrice: u.compareAtPrice })),
+          variants: updates.map((u) => ({
+            id: u.id,
+            // `price` is left out when undefined (JSON drops it), so Shopify keeps the current price.
+            ...(u.price !== undefined ? { price: u.price } : {}),
+            compareAtPrice: u.compareAtPrice,
+          })),
         },
       );
 
@@ -206,4 +214,51 @@ export function createShopifyGateway(
       return { updated, failed };
     },
   };
+}
+
+/** The shop's currency for screens that need it before a sale has been snapshotted; null if the lookup fails. */
+export async function fetchShopCurrency(admin: Pick<AdminApiContext, "graphql">, shop: string): Promise<string | null> {
+  try {
+    const response = await admin.graphql(
+      `#graphql
+      query PriceTideShopCurrencyForDisplay { shop { currencyCode } }`,
+    );
+    const json = (await response.json()) as unknown as { data?: { shop?: { currencyCode?: string } } };
+    return json.data?.shop?.currencyCode ?? null;
+  } catch (error) {
+    logger.warn("Shop currency lookup failed", { shop, error: error as Error });
+    return null;
+  }
+}
+
+/**
+ * Display names ("Snowboard - Blue") for variants, so screens don't show raw ids. Variants that are gone or whose
+ * lookup fails are simply missing from the result; callers fall back to the id.
+ */
+export async function fetchVariantNames(
+  admin: Pick<AdminApiContext, "graphql">,
+  shop: string,
+  variantIds: string[],
+): Promise<Map<string, string>> {
+  const names = new Map<string, string>();
+  try {
+    for (let i = 0; i < variantIds.length; i += NODES_PAGE) {
+      const response = await admin.graphql(
+        `#graphql
+        query PriceTideVariantNames($ids: [ID!]!) {
+          nodes(ids: $ids) {
+            ... on ProductVariant { id displayName }
+          }
+        }`,
+        { variables: { ids: variantIds.slice(i, i + NODES_PAGE) } },
+      );
+      const json = (await response.json()) as unknown as { data?: { nodes?: ({ id?: string; displayName?: string } | null)[] } };
+      for (const node of json.data?.nodes ?? []) {
+        if (node?.id && node.displayName) names.set(node.id, node.displayName);
+      }
+    }
+  } catch (error) {
+    logger.warn("Variant name lookup failed", { shop, error: error as Error });
+  }
+  return names;
 }

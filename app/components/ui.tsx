@@ -37,25 +37,7 @@ export function subscribeNever(): () => void {
   return () => {};
 }
 
-export function formatMoney(amount: string, currencyCode: string | null): string {
-  const n = Number(amount);
-  if (!currencyCode || !Number.isFinite(n)) return amount;
-  try {
-    return new Intl.NumberFormat(undefined, { style: "currency", currency: currencyCode }).format(n);
-  } catch {
-    return `${amount} ${currencyCode}`;
-  }
-}
-
-export function describeDiscount(
-  discountType: string,
-  discountValue: string,
-  currencyCode: string | null,
-): string {
-  return discountType === "PERCENTAGE"
-    ? `${discountValue}% off`
-    : `${formatMoney(discountValue, currencyCode)} off`;
-}
+export { describeDiscount, formatMoney } from "../lib/format";
 
 export const ROUNDING_LABEL: Record<string, string> = {
   NONE: "No rounding",
