@@ -103,6 +103,20 @@ Any host that runs a Docker container and a PostgreSQL database works (Fly.io, R
 
 Run at least one always-on instance (or the cron) — sales only start and end while the scheduler runs.
 
+### Google Cloud Run (lowest cost)
+
+Cloud Run (scales to zero) + Cloud Scheduler calling `/jobs/tick` every minute + a free Supabase Postgres.
+At pilot traffic this stays within the free tiers.
+
+1. Create a Supabase project and copy **Connect → Session pooler** connection string (works over IPv4 and with
+   `prisma migrate deploy`).
+2. Create a Google Cloud project with billing enabled, open **Cloud Shell**, clone this repo, and run
+   `bash deploy/gcp-cloud-run.sh`. It enables the APIs, stores secrets in Secret Manager (generating the token
+   encryption key and cron secret once), deploys, schedules the tick and writes the app URL into
+   `shopify.app.toml`.
+3. `npm run config:link` (first time), then `npm run deploy`.
+4. Add a $5 budget alert under Billing → Budgets & alerts.
+
 ## Before you submit to the App Store
 
 The full requirement-by-requirement audit, listing copy, reviewer instructions and screencast script are in
