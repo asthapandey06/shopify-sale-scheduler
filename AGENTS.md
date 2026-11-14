@@ -149,7 +149,7 @@ test/           *.test.ts suites + helpers (fake Shopify store, clock).
 ## Git workflow
 - Small, focused commits with clear messages. Run `npm run check` before committing.
 - Don't push to `main` with failing checks. Don't rewrite published history.
-- Dependabot is limited to monthly minor/patch groups; don't merge major upgrades without testing.
+- Dependabot version-update PRs are turned off (no `.github/dependabot.yml`); update dependencies deliberately and test them.
 - `react-router` / `@react-router/*` are pinned at 7.18.2 (template requirement) — don't bump them.
 
 ## Ask before you…

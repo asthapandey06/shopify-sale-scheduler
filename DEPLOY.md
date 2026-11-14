@@ -1,4 +1,9 @@
-# Deploying PriceTide (Oracle Cloud VM + Docker + Neon)
+# Deploying PriceTide
+
+Two supported setups: **Option A**, an Oracle Cloud VM with Docker, Caddy and Neon (sections 0 onwards), or
+**Option B**, Google Cloud Run with Cloud Scheduler (last section).
+
+## Option A: Oracle Cloud VM + Docker + Neon
 
 Production setup: one Oracle Cloud **Ampere A1 (ARM64)** VM running Docker, with **Caddy** in front for
 automatic HTTPS, and a **Neon** PostgreSQL database. The scheduler runs inside the app container, so the
@@ -246,3 +251,44 @@ then follow SECURITY.md › "If the database is exposed".
 - [ ] `docker compose … up -d`; `/healthz` returns ok over https
 - [ ] `npm run deploy` run; app installs on a dev store; live test plan passed
 - [ ] Uptime monitor on `/healthz`; nightly backup cron + off-VM copy; restore tested once
+
+---
+
+## Option B: Google Cloud Run (no VM to manage)
+
+Cloud Run runs the same `Dockerfile`, scales to zero, and gets HTTPS on a `*.run.app` URL. Because instances
+stop between requests, the in-process scheduler is turned off (`SCHEDULER_ENABLED=false`) and Cloud Scheduler
+calls `POST /jobs/tick` every minute instead. Option A is the Oracle Cloud VM above.
+
+```
+Cloud Scheduler ──every minute──▶ POST /jobs/tick ─┐
+merchant ── Shopify admin ──https──▶ Cloud Run (app) ┴──▶ Postgres (DATABASE_URL; migrations via DIRECT_URL)
+```
+
+**Database and cost.** The per-minute tick queries the database around the clock, so a database that bills or
+caps compute by the hour never gets to sleep. Neon's free plan (100 CU-hours a month) runs out after roughly
+two weeks of always-on 0.25 CU compute; use a database without an hourly compute cap for production (for
+example Supabase's free plan, with its session pooler URL as `DATABASE_URL` and no `DIRECT_URL`), or a paid
+Neon plan. Cloud Run, Cloud Scheduler and Secret Manager stay within their free tiers at pilot traffic.
+
+**Steps** (set up the separate dev app from section 0 first):
+
+1. Create a Google Cloud project, enable billing, and add a $5 budget alert (Billing › Budgets & alerts).
+2. Open **Cloud Shell** in that project, go to the repo, check out the commit to release, and run:
+   ```bash
+   bash deploy/gcp-cloud-run.sh
+   ```
+   It asks for the project ID, the Shopify client ID and secret, the database URLs, the support email and your
+   name. It then:
+   - enables the required APIs
+   - stores secrets in Secret Manager, generating `TOKEN_ENCRYPTION_KEYS` and `CRON_SECRET` once and never replacing them
+   - deploys to Cloud Run, which runs migrations on start
+   - creates the Cloud Scheduler tick job
+   - writes the `*.run.app` URL into `shopify.app.toml`
+
+   Re-running it redeploys and updates the job.
+3. `npm run config:use shopify.app.toml` (the production app), then `npm run deploy` to push URLs, scopes and webhooks.
+4. Install on a development store and work through the checks in `QA_BUGFIX_CHECKLIST.md`.
+
+Logs: `gcloud run services logs read pricetide --region us-central1 --limit 100`.
+Rollback: `gcloud run services update-traffic pricetide --region us-central1 --to-revisions <REVISION>=100`.
